@@ -1,5 +1,7 @@
 # racket-pgm
 
+Work in Progress.  This is not a license.
+
 An ad-hoc, informally specified, bug-ridden, slow implementation of half of python's libpgm.
 
 The author felt that it would be instructive (to him) to implement representation, inference and learning for a pgm, and that it would be fun to do so in typed racket.
