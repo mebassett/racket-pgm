@@ -1,5 +1,23 @@
 #lang typed/racket
-
+(provide make-graph
+         make-empty-graph
+         Graph
+         has-vertex?
+         has-edge?
+         vertex=? 
+         add-edge!
+         remove-edge!
+         add-vertex!
+         remove-vertex!
+         rename-vertex!
+         get-vertices
+         in-vertices
+         get-neighbors
+         in-neighbors
+         get-edges
+         in-edges
+         transpose
+         graph-copy)
 
 (define-type (AdjacencyList t) 
  (HashTable t (Setof t)))
