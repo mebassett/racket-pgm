@@ -11,6 +11,7 @@
          remove-vertex!
          rename-vertex!
          get-vertices
+         get-leaves
          in-vertices
          get-neighbors
          in-neighbors
@@ -59,6 +60,11 @@
 (: get-vertices (∀ (t) (-> (Graph t) (Listof t))))
 (define (get-vertices g)
  (hash-keys (Graph-adj g)))
+
+(: get-leaves (∀ (t) (-> (Graph t) (Listof t))))
+(define (get-leaves g)
+ (filter (λ ([v : t]) (null? (get-neighbors g v)))
+         (get-vertices g))) 
 
 (: in-vertices (∀ (t) (-> (Graph t) (Sequenceof t))))
 (define (in-vertices g)
