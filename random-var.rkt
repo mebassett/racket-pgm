@@ -1,4 +1,7 @@
 #lang typed/racket
+; not released under any license as this really isn't usable.
+; will think about that if it gets that far.
+
 (require math/flonum)
 (provide (struct-out RandomVar)
          (struct-out DiscreteRandomVar)
