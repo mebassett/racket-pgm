@@ -1,5 +1,20 @@
 #lang typed/racket
 (require math/flonum)
+(provide (struct-out RandomVar)
+         (struct-out DiscreteRandomVar)
+         add-dependency!
+         make-DiscreteRandomVar
+         TableCPDIndex
+         TableCPD
+         generate-uniform-table-cpd
+         (struct-out DiscreteModel) 
+         is-valid-cpd?
+         is-valid-model?
+         make-naive-model
+         update-cpd!
+         (struct-out DiscreteFactor)
+         probability-conditioned-on-evidence)
+         
 
 (struct RandomVar ([name : Symbol]
                    [depends-on : (Listof RandomVar)]
@@ -27,13 +42,23 @@
                                          (cons (RandomVar-name var) label))
                                        (DiscreteRandomVar-labels var)))
                                 vars)))
-(define (get-variable-labels [var : DiscreteRandomVar]) : (Setof (Setof TableCPDIndex))
+(define (get-cpd-labels [var : DiscreteRandomVar]) : (Setof (Setof TableCPDIndex))
   (list->set
    (for/list : (Listof (Setof TableCPDIndex))
      ([i (make-TableCPD-labels (filter DiscreteRandomVar?
                                        (cons var (RandomVar-depends-on var))))])
      (list->set i))))
 
+(define (get-variable-labels [var : DiscreteRandomVar]) : (Setof (Setof TableCPDIndex))
+  (for/set : (Setof (Setof TableCPDIndex)) ([i (DiscreteRandomVar-labels var)])
+    (set (cons (RandomVar-name var) i))))
+
+(define (get-variable-labels* [var : DiscreteRandomVar]) : (Setof TableCPDIndex)
+    (foldl (λ ([x : (Setof TableCPDIndex)]
+               [y : (Setof TableCPDIndex)]) : (Setof TableCPDIndex)
+             (set-union x y))
+           (ann (set) (Setof TableCPDIndex))
+           (set->list (get-variable-labels var))))
 
 (define (generate-uniform-table-cpd [var : DiscreteRandomVar]) : TableCPD
   (for/hash : TableCPD ([k (make-TableCPD-labels (filter DiscreteRandomVar?
@@ -41,7 +66,7 @@
     (values (list->set k)
             (exact->inexact (/ 1 (length (DiscreteRandomVar-labels var)))))))
 
-(struct DiscreteModel ([vars : (Listof DiscreteRandomVar)]
+(struct DiscreteModel ([vars : (HashTable Symbol DiscreteRandomVar)]
                        [cpds : (HashTable DiscreteRandomVar TableCPD)]) #:mutable)
 
 (define (is-valid-cpd? [var : DiscreteRandomVar]
@@ -65,7 +90,7 @@
 ;
 (define (is-valid-model? [model : DiscreteModel]) : Boolean
   (define (all-cpds-exist?)
-    (for/and : Boolean ([v (DiscreteModel-vars model)]) (not (false? (hash-ref (DiscreteModel-cpds model) v #f)))))
+    (for/and : Boolean ([v (hash-values (DiscreteModel-vars model))]) (not (false? (hash-ref (DiscreteModel-cpds model) v #f)))))
   (define (all-cpds-valid?)
     (for/and : Boolean ([(var cpd) (DiscreteModel-cpds model)]) (is-valid-cpd? var cpd)))
   (and (all-cpds-exist?)
@@ -75,7 +100,9 @@
   (define cpds : (HashTable DiscreteRandomVar TableCPD) (make-hash))
   (for ([var vars])
     (hash-set! cpds var (generate-uniform-table-cpd var)))
-  (DiscreteModel vars cpds))
+  (DiscreteModel (for/hash : (HashTable Symbol DiscreteRandomVar) ([v vars])
+                   (values (RandomVar-name v) v))
+                 cpds))
 
 (define (update-cpd! [model : DiscreteModel]
                      [var : DiscreteRandomVar]
@@ -84,7 +111,7 @@
     (for/hash : TableCPD ([([k : (Listof TableCPDIndex)]
                             [v : Float])          pre-cpd])
       (values (list->set k) v)))
-  (unless (member var (DiscreteModel-vars model))
+  (unless (member var (hash-values (DiscreteModel-vars model)))
     (error "Random Variable ~a not in Model ~a" var model))
   (unless (is-valid-cpd? var cpd)
     (error "TableCPD ~a is not valid for random variable ~a.  Please check its dependencies and that it sums to 1." cpd var))
@@ -98,30 +125,51 @@
         (error "The variables ~a are outside of the scope of Factor ~a" labels self (DiscreteFactor-scope self)))
      ((DiscreteFactor-func self) labels)) : (-> DiscreteFactor (Setof TableCPDIndex) Float)])
 
+(: set-filter (All (T) (-> (-> T Boolean) (Setof T) (Setof T))))
+(define (set-filter valid? set)
+  (list->set (filter valid? (set->list set))))
+
+
+(: partial-application-factor (-> DiscreteFactor (Setof TableCPDIndex) DiscreteFactor))
+  (define (partial-application-factor factor evidence)
+    (define evidence-labels (set-map evidence (λ ([x : TableCPDIndex]) (car x))))
+    (define reduced-scope (for/set : (Setof (Setof TableCPDIndex)) ([labels (DiscreteFactor-scope factor)])
+                            (list->set (filter (λ ([index : TableCPDIndex]) (false? (member (car index) evidence-labels))) (set->list labels)))))
+    (define reduced-evidence (set-filter (λ ([x : TableCPDIndex]) (set-member? (get-scope-symbols (DiscreteFactor-scope factor)) (car x)))
+                                         evidence))
+      
+    (DiscreteFactor reduced-scope (λ (labels) (factor (set-union labels reduced-evidence)))))
+
 (define (associated-factor [var : DiscreteRandomVar]
                              [model : DiscreteModel]) : DiscreteFactor
     (define cpd (hash-ref (DiscreteModel-cpds model) var))
     (DiscreteFactor (list->set (hash-keys cpd)) (λ (labels) (hash-ref cpd labels))))
 
 (define (var-in-scope? [var : DiscreteRandomVar] [factor : DiscreteFactor]) : Boolean
-  (for/and : Boolean
-    ([i (DiscreteFactor-scope (associated-factor grade model))]
-     [j (get-variable-labels difficulty)])
-    (subset? j i)))
+  ; we should probably change factors to have a list of their random vars, rather than the entire domain.
+  (set-member? (get-scope-symbols (DiscreteFactor-scope factor)) (RandomVar-name var)))
+  ;(for/and : Boolean
+  ;  ([i (DiscreteFactor-scope factor)]
+  ;   [j (get-variable-labels var)])
+  ;  (subset? j i)))
 
 (define (factor-marginalization [factor : DiscreteFactor]
                                 [var : DiscreteRandomVar]
                                 [model : DiscreteModel]) : DiscreteFactor
-  (define var-scope (list->set (hash-keys (hash-ref (DiscreteModel-cpds model) var)))) 
+  ;(define var-scope (list->set (hash-keys (hash-ref (DiscreteModel-cpds model) var)))) 
   (unless (var-in-scope? var factor)
     (error "Variable ~a is not in the scope of Factor ~a" var factor))
+  (define variable-labels (get-variable-labels* var))
+ 
   (DiscreteFactor (for/set : (Setof (Setof TableCPDIndex))
-                    ([i (DiscreteFactor-scope (associated-factor grade model))]
-                     [j (get-variable-labels difficulty)])
-                    (set-subtract i j))
+                    ([i (DiscreteFactor-scope factor)])
+                    (set-filter (λ ([x : TableCPDIndex])
+                                  (false? (set-member? variable-labels x)))
+                                i))
+
                   (λ (factor-labels)
-                    (flsum (map (λ ([var-labels : (Setof TableCPDIndex)]) : Float
-                                  (factor (set-union factor-labels var-labels)))
+                    (flsum (map (λ ([var-label : (Setof TableCPDIndex)]) : Float
+                                  (factor (set-union factor-labels var-label)))
                                 (set->list (get-variable-labels var)))))))
 
 (define (get-scope-symbols [scope : (Setof (Setof TableCPDIndex))]) : (Setof Symbol)
@@ -134,69 +182,66 @@
        (filter (λ ([x : TableCPDIndex]) (set-member? scope-symbols (car x)))
                (set->list labels))))
 
-(define (product-factor [f1 : DiscreteFactor]
-                        [f2 : DiscreteFactor]) : DiscreteFactor
-  (define f1-symbols (get-scope-symbols (DiscreteFactor-scope f1)))
-  (define f2-symbols (get-scope-symbols (DiscreteFactor-scope f2)))
-  (define joint-scope 
-    (for/set : (Setof (Setof TableCPDIndex))
-      ([i (DiscreteFactor-scope f1)]
-       [j (DiscreteFactor-scope f2)])
-      (set-union i j)))
-  (define (factor-func [labels : (Setof TableCPDIndex)]) : Float
-    (* (f1 (labels-within-scope f1-symbols labels))
-       (f2 (labels-within-scope f2-symbols labels))))
-  (DiscreteFactor joint-scope factor-func))
+
+
+(: product-factor (-> DiscreteModel DiscreteFactor * DiscreteFactor))
+(define (product-factor model . factors)
+  (define (helper [f1 : DiscreteFactor]
+                  [f2 : DiscreteFactor]) : DiscreteFactor
+    (define f1-symbols (get-scope-symbols (DiscreteFactor-scope f1)))
+    (define f2-symbols (get-scope-symbols (DiscreteFactor-scope f2)))
+    (define joint-scope 
+      (list->set (map (λ ([labels : (Listof TableCPDIndex)]) (list->set labels))
+                      (apply cartesian-product
+                             (set-map (set-union f1-symbols f2-symbols)
+                                      (λ ([x : Symbol])
+                                        (set->list (get-variable-labels* (hash-ref (DiscreteModel-vars model) x)))))))))
+    (define (factor-func [labels : (Setof TableCPDIndex)]) : Float
+      (* (f1 (labels-within-scope f1-symbols labels))
+         (f2 (labels-within-scope f2-symbols labels))))
+    (DiscreteFactor joint-scope factor-func))
+
+  (foldl helper (car factors) (cdr factors)))
   
+; as from Friedman & Koller, Probabilistic Graphical Models Alg9.1
+(define (sum-product-eliminate-var [factors : (Setof DiscreteFactor)]
+                                   [var : DiscreteRandomVar]
+                                   [model : DiscreteModel]) : (Setof DiscreteFactor)
+  (define factors-with-var (list->set (filter (λ ([factor : DiscreteFactor]) (var-in-scope? var factor))
+                                              (set->list factors))))
+  (define factors-without-var (set-subtract factors factors-with-var))
+  (define new-factor (factor-marginalization (apply (curry product-factor model) (set->list factors-with-var)) var model))
+  (set-add factors-without-var new-factor))
 
+; ibid
+; we need to define a sensible order here.  set->list gives a different order each time and not all these orders make sense.
 
-(define difficulty (make-DiscreteRandomVar 'difficulty '("hard" "easy")))
-(define grade (make-DiscreteRandomVar 'grade '("a" "b" "f")))
-(define SAT (make-DiscreteRandomVar 'SAT '("high" "low")))
-(define letter (make-DiscreteRandomVar 'letter '("good" "poor")))
-(define intelligence (make-DiscreteRandomVar 'iq '("high" "low")))
+(define (eliminate-variable [factors : (Setof DiscreteFactor)]
+                          [vars : (Setof DiscreteRandomVar)]
+                          [model : DiscreteModel]) : DiscreteFactor
+  (apply (curry product-factor model) (set->list (foldl (λ ([var : DiscreteRandomVar]
+                                              [fs : (Setof DiscreteFactor)]) : (Setof DiscreteFactor)
+                                            (sum-product-eliminate-var fs var model))
+                                          factors
+                                          (set->list vars)))))
 
-(add-dependency! grade difficulty)
-(add-dependency! grade intelligence)
-(add-dependency! SAT intelligence)
-(add-dependency! letter grade)
-(define model (make-naive-model (list difficulty grade SAT letter intelligence)))
+(define (probability-conditioned-on-evidence [model : DiscreteModel]
+                                             [vars : (Setof DiscreteRandomVar)]
+                                             [evidence : (Setof TableCPDIndex)]) : DiscreteFactor
+    (define factors (list->set (map (λ ([var : DiscreteRandomVar]) (partial-application-factor (associated-factor var model) evidence))
+                                    (hash-values (DiscreteModel-vars model)))))
+    
+    (define evidence-labels (set-map evidence (λ ([x : TableCPDIndex]) (car x))))
+    (define evidence-vars (list->set (map (λ ([x : Symbol]) (hash-ref (DiscreteModel-vars model) x)) evidence-labels)))
+    (define unnorm-factor (eliminate-variable factors
+                                              (set-subtract (list->set (hash-values (DiscreteModel-vars model))) vars evidence-vars)
+                                              model))
+    (define alpha (flsum (set-map (DiscreteFactor-scope unnorm-factor) (λ ([x : (Setof TableCPDIndex)]) (unnorm-factor x)))))
+    (DiscreteFactor (DiscreteFactor-scope unnorm-factor)
+                    (λ (label)
+                      (/ (unnorm-factor label) alpha))))
 
-(update-cpd! model difficulty #hash((((difficulty . "hard")) . 0.4) (((difficulty . "easy")) . 0.6)))
-(update-cpd! model intelligence #hash((((iq . "high")) . 0.3) (((iq . "low")) . 0.7)))
-(update-cpd! model grade 
-#hash(
-       (((difficulty . "easy") (iq . "low") (grade . "a")) . 0.3)
-       (((grade . "b") (difficulty . "easy") (iq . "low")) . 0.4)
-       (((grade . "f") (difficulty . "easy") (iq . "low")) . 0.3)
-       (((difficulty . "hard") (iq . "low") (grade . "a")) . 0.05)
-       (((difficulty . "hard") (grade . "b") (iq . "low")) . 0.25)
-       (((difficulty . "hard") (grade . "f") (iq . "low")) . 0.7)
-       (((iq . "high") (difficulty . "easy") (grade . "a")) . 0.9)
-       (((iq . "high") (grade . "b") (difficulty . "easy")) . 0.08)
-       (((iq . "high") (grade . "f") (difficulty . "easy")) . 0.02)
-       (((iq . "high") (difficulty . "hard") (grade . "a")) . 0.5)
-       (((iq . "high") (difficulty . "hard") (grade . "b")) . 0.3)
-       (((iq . "high") (difficulty . "hard") (grade . "f")) . 0.2)
-       ))
-(update-cpd! model SAT 
-#hash(
-       (((SAT . "low") (iq . "low")) . 0.95)
-       (((SAT . "high") (iq . "low")) . 0.05)
-       (((iq . "high") (SAT . "low")) . 0.2)
-       (((iq . "high") (SAT . "high")) . 0.8)
-       ))
-(update-cpd! model letter
-    #hash(
-       (((letter . "poor") (grade . "a")) . 0.1)
-       (((letter . "good") (grade . "a")) . 0.9)
-       (((grade . "b") (letter . "poor")) . 0.4)
-       (((grade . "b") (letter . "good")) . 0.6)
-       (((grade . "f") (letter . "poor")) . 0.99)
-       (((grade . "f") (letter . "good")) . 0.01)
-       ))
-
-
+                                   
 
 
                                    
