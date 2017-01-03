@@ -40,5 +40,5 @@ understand many of them, while others are just frightening.  These including:
 Additionally, the author would like to implement Bayesian learning methods, but
 he is afraid of them especially in the case of missing or incomplete data.
 
-If the reader scoffs at the lack of intellectual courage of the author, then the
+If the reader scoffs at the lack of intellectual intrepidness of the author, then the
 reader is of course invited to contribute. :)
