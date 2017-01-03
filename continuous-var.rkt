@@ -1,11 +1,14 @@
 #lang typed/racket
 (require "random-var.rkt"
+         "utils.rkt"
          math/matrix
          math/flonum)
 
 (struct GaussianRandomVar RandomVar ())
 
 (define-type ContinuousIndex (Pairof Symbol Float))
+(define-predicate ContinuousIndex? ContinuousIndex)
+
 
 (define (unpack [x : (Matrix Float)]) : Float
   (matrix-ref x 0 0))
@@ -43,7 +46,7 @@
        (list->set
         (set-map values (λ ([x : ContinuousIndex]) (car x)))))
      (unless (equal? scope-labels var-labels)
-       (error "Factor ~a called with variables ~a which are outside of my scope: ~a"
+       (error "Canonical Factor ~a called with variables ~a which are outside of my scope: ~a"
               self values (CanonicalFactor-scope self)))
      (define X : (Matrix Float)
        (->col-matrix (set-map values (λ ([x : ContinuousIndex]) (cdr x)))))
@@ -59,10 +62,29 @@
 
 (define-struct/exec Factor
   ([scope : (Setof RandomVar)]
-   [data : (HashTable (Setof (Setof TableCPDIndex))
+   [data : (HashTable (Setof TableCPDIndex)
                       CanonicalMixture)])
-  [(λ (self values)
-     0.0) : (-> Factor
-                (Setof (Setof (U ContinuousIndex TableCPDIndex)))                
+  [(λ (self var-values)
+     (define scope-vars
+       (for/hash : (HashTable Symbol RandomVar) ([v (Factor-scope self)])
+         (values (RandomVar-name v) v)))
+     (define discrete-values : (Setof TableCPDIndex)
+       (set-filter TableCPDIndex? var-values))
+     (define continuous-values : (Setof ContinuousIndex)
+       (set-filter ContinuousIndex? var-values))
+     (define var-labels
+       (list->set
+        (set-map var-values (λ ([x : (U TableCPDIndex ContinuousIndex)]) (car x)))))
+     (unless (equal? var-labels (list->set (hash-keys scope-vars)))
+       (error "Factor ~a called with variables ~a which are outside of my scope: ~a"
+              self var-values (Factor-scope self)))
+     (foldl fl*
+            1.0
+            (map (λ ([weighted-cfactor : (Pairof Float CanonicalFactor)])
+                   (fl* (car weighted-cfactor)
+                        ((cdr weighted-cfactor) continuous-values)))
+                 (hash-ref (Factor-data self) discrete-values))))
+     : (-> Factor
+                (Setof (U ContinuousIndex TableCPDIndex))
                 Float)])
 
