@@ -37,16 +37,7 @@
                                        (cons var (RandomVar-depends-on var))))])
      (list->set i))))
 
-(define (get-variable-labels [var : DiscreteRandomVar]) : (Setof (Setof TableCPDIndex))
-  (for/set : (Setof (Setof TableCPDIndex)) ([i (DiscreteRandomVar-labels var)])
-    (set (cons (RandomVar-name var) i))))
 
-(define (get-variable-labels* [var : DiscreteRandomVar]) : (Setof TableCPDIndex)
-    (foldl (λ ([x : (Setof TableCPDIndex)]
-               [y : (Setof TableCPDIndex)]) : (Setof TableCPDIndex)
-             (set-union x y))
-           (ann (set) (Setof TableCPDIndex))
-           (set->list (get-variable-labels var))))
 
 (define (generate-uniform-table-cpd [var : DiscreteRandomVar]) : TableCPD
   (for/hash : TableCPD ([k (make-TableCPD-labels (filter DiscreteRandomVar?
@@ -80,18 +71,6 @@
      (unless (set-member? (DiscreteFactor-scope self) labels)
         (error "The variables ~a are outside of the scope of Factor ~a" labels self (DiscreteFactor-scope self)))
      ((DiscreteFactor-func self) labels)) : (-> DiscreteFactor (Setof TableCPDIndex) Float)])
-
-
-
-
-
-
-
-
-
-  
-
-
 
 
 ; Canonical Factors is the space where Normal Distributions
@@ -139,12 +118,12 @@
                                    X))))))
     : (-> CanonicalFactor (Setof ContinuousIndex) Float)])
 
-(define-type CanonicalMixture (Listof (Pairof Float CanonicalFactor))) 
+(define-type CanonicalMixture (Listof (Pairof Float CanonicalFactor)))
 
 (define-struct/exec Factor
   ([scope : (Setof RandomVar)]
    [data : (HashTable (Setof TableCPDIndex)
-                      CanonicalMixture)])
+                      (U Float CanonicalMixture))])
   [(λ (self var-values)
      (define scope-vars
        (for/hash : (HashTable Symbol RandomVar) ([v (Factor-scope self)])
@@ -159,12 +138,16 @@
      (unless (equal? var-labels (list->set (hash-keys scope-vars)))
        (error "Factor ~a called with variables ~a which are outside of my scope: ~a"
               self var-values (Factor-scope self)))
-     (foldl fl*
-            1.0
-            (map (λ ([weighted-cfactor : (Pairof Float CanonicalFactor)])
-                   (fl* (car weighted-cfactor)
-                        ((cdr weighted-cfactor) continuous-values)))
-                 (hash-ref (Factor-data self) discrete-values))))
+     (define factor (hash-ref (Factor-data self) discrete-values))
+     (cond [(list? factor)
+            (foldl fl*
+                   1.0
+                   (map (λ ([weighted-cfactor : (Pairof Float CanonicalFactor)])
+                          (fl* (car weighted-cfactor)
+                               ((cdr weighted-cfactor) continuous-values)))
+                        factor))]
+           [(flonum? factor)
+            factor]))
      : (-> Factor
                 (Setof (U ContinuousIndex TableCPDIndex))
                 Float)])
