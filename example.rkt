@@ -1,5 +1,6 @@
 #lang typed/racket
-(require "random-var.rkt")
+(require "model.rkt" "random-var.rkt")
+
 
 ; step 1 - let's define some discrete random variables.
 ; the built-in constructer isn't great, use make-DiscreteRandomVar as it
