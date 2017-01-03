@@ -2,7 +2,7 @@
 ; not released under any license as this really isn't usable.
 ; will think about that if it gets that far.
 
-(require math/flonum)
+(require math/flonum "utils.rkt")
 (provide (struct-out RandomVar)
          (struct-out DiscreteRandomVar)
          add-dependency!
@@ -38,6 +38,8 @@
 (define-type TableCPDIndex (Pairof Symbol String))
 (define-type TableCPD (HashTable (Setof TableCPDIndex)
                                  Float))
+
+
 
 (define (make-TableCPD-labels [vars : (Listof DiscreteRandomVar)]) : (Listof (Listof TableCPDIndex))
   (apply cartesian-product (map (λ ([var : DiscreteRandomVar])
@@ -128,9 +130,7 @@
         (error "The variables ~a are outside of the scope of Factor ~a" labels self (DiscreteFactor-scope self)))
      ((DiscreteFactor-func self) labels)) : (-> DiscreteFactor (Setof TableCPDIndex) Float)])
 
-(: set-filter (All (T) (-> (-> T Boolean) (Setof T) (Setof T))))
-(define (set-filter valid? set)
-  (list->set (filter valid? (set->list set))))
+
 
 
 (: partial-application-factor (-> DiscreteFactor (Setof TableCPDIndex) DiscreteFactor))
