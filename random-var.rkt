@@ -8,6 +8,7 @@
          add-dependency!
          make-DiscreteRandomVar
          TableCPDIndex
+         TableCPDIndex?
          TableCPD
          generate-uniform-table-cpd
          (struct-out DiscreteModel) 
@@ -38,7 +39,7 @@
 (define-type TableCPDIndex (Pairof Symbol String))
 (define-type TableCPD (HashTable (Setof TableCPDIndex)
                                  Float))
-
+(define-predicate TableCPDIndex? TableCPDIndex)
 
 
 (define (make-TableCPD-labels [vars : (Listof DiscreteRandomVar)]) : (Listof (Listof TableCPDIndex))
