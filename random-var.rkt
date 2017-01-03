@@ -8,7 +8,8 @@
          (struct-out GaussianRandomVar)
          add-dependency!
          make-DiscreteRandomVar
-         make-GaussianRandomVar)
+         make-GaussianRandomVar
+         get-var-labels)
          
 
 (struct RandomVar ([name : Symbol]
@@ -30,7 +31,8 @@
 (define (make-GaussianRandomVar [name : Symbol]) : GaussianRandomVar
   (GaussianRandomVar name '() '()))
   
-
+(define (get-var-labels [vars : (Setof RandomVar)]) : (Setof Symbol)
+  (list->set (set-map vars (λ ([v : RandomVar]) (RandomVar-name v)))))
 
 
 

@@ -6,8 +6,10 @@
 
 (provide ContinuousIndex
          ContinuousIndex?
-                  TableCPDIndex
+         TableCPDIndex
          TableCPDIndex?
+         AnyIndex
+         AnyIndex?
          TableCPD
          generate-uniform-table-cpd
          is-valid-cpd?
@@ -23,6 +25,9 @@
 (define-type TableCPD (HashTable (Setof TableCPDIndex)
                                  Float))
 (define-predicate TableCPDIndex? TableCPDIndex)
+
+(define-type AnyIndex (U ContinuousIndex TableCPDIndex))
+(define-predicate AnyIndex? AnyIndex)
 
 (define (make-TableCPD-labels [vars : (Listof DiscreteRandomVar)]) : (Listof (Listof TableCPDIndex))
   (apply cartesian-product (map (λ ([var : DiscreteRandomVar])
@@ -69,7 +74,7 @@
    [func : (-> (Setof TableCPDIndex) Float)])
   [(λ (self labels)
      (unless (set-member? (DiscreteFactor-scope self) labels)
-        (error "The variables ~a are outside of the scope of Factor ~a" labels self (DiscreteFactor-scope self)))
+       (error "The variables ~a are outside of the scope of Factor ~a" labels self (DiscreteFactor-scope self)))
      ((DiscreteFactor-func self) labels)) : (-> DiscreteFactor (Setof TableCPDIndex) Float)])
 
 
@@ -99,9 +104,8 @@
    [g : Flonum])
   [(λ (self values)
      (define scope-labels
-       (list->set
-        (set-map (CanonicalFactor-scope self)
-                 (λ ([x : GaussianRandomVar]) (RandomVar-name x)))))
+       (get-var-labels (CanonicalFactor-scope self)))
+       
      (define var-labels
        (list->set
         (set-map values (λ ([x : ContinuousIndex]) (car x)))))
@@ -116,14 +120,16 @@
                   (unpack (matrix* (->row-matrix X)
                                    (CanonicalFactor-K self)
                                    X))))))
-    : (-> CanonicalFactor (Setof ContinuousIndex) Float)])
+   : (-> CanonicalFactor (Setof ContinuousIndex) Float)])
 
 (define-type CanonicalMixture (Listof (Pairof Float CanonicalFactor)))
+(define-type FactorData (HashTable (Setof TableCPDIndex)
+                                   (U Float CanonicalMixture)))
 
 (define-struct/exec Factor
   ([scope : (Setof RandomVar)]
-   [data : (HashTable (Setof TableCPDIndex)
-                      (U Float CanonicalMixture))])
+   [data : FactorData]
+   [func : (U Null (-> (Setof AnyIndex) Float))])
   [(λ (self var-values)
      (define scope-vars
        (for/hash : (HashTable Symbol RandomVar) ([v (Factor-scope self)])
@@ -131,24 +137,77 @@
      (define discrete-values : (Setof TableCPDIndex)
        (set-filter TableCPDIndex? var-values))
      (define continuous-values : (Setof ContinuousIndex)
-       (set-filter ContinuousIndex? var-values))
+       (set-filter ContinuousIndex? var-values))     
      (define var-labels
        (list->set
         (set-map var-values (λ ([x : (U TableCPDIndex ContinuousIndex)]) (car x)))))
      (unless (equal? var-labels (list->set (hash-keys scope-vars)))
        (error "Factor ~a called with variables ~a which are outside of my scope: ~a"
               self var-values (Factor-scope self)))
-     (define factor (hash-ref (Factor-data self) discrete-values))
-     (cond [(list? factor)
-            (foldl fl*
-                   1.0
-                   (map (λ ([weighted-cfactor : (Pairof Float CanonicalFactor)])
-                          (fl* (car weighted-cfactor)
-                               ((cdr weighted-cfactor) continuous-values)))
-                        factor))]
-           [(flonum? factor)
-            factor]))
-     : (-> Factor
-                (Setof (U ContinuousIndex TableCPDIndex))
-                Float)])
+     (if (null? (Factor-func self))
+         (let ([factor (hash-ref (Factor-data self) discrete-values)])
+           (cond [(list? factor)
+                  (foldl fl*
+                         1.0
+                         (map (λ ([weighted-cfactor : (Pairof Float CanonicalFactor)])
+                                (fl* (car weighted-cfactor)
+                                     ((cdr weighted-cfactor) continuous-values)))
+                              factor))]
+                 [(flonum? factor)
+                  factor]))
+         ((Factor-func self) var-values)))
+   : (-> Factor
+         (Setof AnyIndex)
+         Float)])
+
+(define (partial-application-factor [factor : Factor]
+                                    [evidence : (Setof AnyIndex)]) : Factor
+  (define evidence-labels (set-map evidence (λ ([x : AnyIndex]) (car x))))
+  (define reduced-scope
+    (set-filter (λ ([v : RandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
+                (Factor-scope factor)))
+  (define reduced-evidence
+    (set-filter (λ ([x : AnyIndex])
+                  (set-member? (get-var-labels (Factor-scope factor)) (car x)))
+                evidence))
+  (Factor reduced-scope
+          (ann (make-hash) FactorData)
+          (λ ([var-values : (Setof AnyIndex)]) : Float
+            (factor (set-union var-values reduced-evidence)))))
+
+(define (labels-within-factor [f : Factor]
+                              [labels : (Setof AnyIndex)]) : (Setof AnyIndex)
+  (define (labels-within-scope [symbols : (Setof Symbol)]
+                               [labels : (Setof AnyIndex)]) : (Setof AnyIndex)
+     (set-filter (λ ([x : AnyIndex]) (set-member? symbols (car x))) labels))
+  (define (get-factor-symbols) : (Setof Symbol)
+    (list->set (set-map (Factor-scope f) RandomVar-name)))
+  (labels-within-scope (get-factor-symbols) labels))
+  
+
+(: product-factor (-> Factor * Factor))
+(define (product-factor . factors)
+  (define (helper [f1 : Factor]
+                  [f2 : Factor]) : Factor
+    (Factor (set-union (Factor-scope f1) (Factor-scope f2))
+            (ann (make-hash) FactorData)
+            (λ ([var-values : (Setof AnyIndex)]) : Float
+              (fl* (f1 (labels-within-factor f1 var-values))
+                   (f2 (labels-within-factor f2 var-values))))))
+  (foldl helper (car factors) (cdr factors)))
+  
+(define (factor-marginalization [factor : Factor]
+                                [var : RandomVar]) : Factor
+  (unless (set-member? (Factor-scope factor) var)
+    (error "Variable ~a is not in the scope of Factor ~a" var factor))
+  ;(cond [(DiscreteRandomVar? var)
+  ;       (Factor (set-subtract (Factor-scope var))
+  ;               (ann (make-hash) FactorData)
+  ;               (λ ([var-values : (Setof AnyIndex)]) : Float
+                   
+                      
+  
+  factor)
+
+                                
 
