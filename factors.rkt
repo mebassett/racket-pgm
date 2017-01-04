@@ -2,7 +2,8 @@
 (require "random-var.rkt"
          "utils.rkt"
          math/matrix
-         math/flonum)
+         math/flonum
+         threading)
 
 (provide ContinuousIndex
          ContinuousIndex?
@@ -14,7 +15,8 @@
          generate-uniform-table-cpd
          is-valid-cpd?
          (struct-out DiscreteFactor)
-         ;(struct-out CanonicalFactor)
+         (struct-out CanonicalFactor)
+         partial-application-factor
          (struct-out Factor))
 
 
@@ -78,6 +80,25 @@
      ((DiscreteFactor-func self) labels)) : (-> DiscreteFactor (Setof TableCPDIndex) Float)])
 
 
+
+(: canonical-order (case-> (-> (Setof GaussianRandomVar) (Listof GaussianRandomVar))
+                           (-> (Setof ContinuousIndex) (Listof ContinuousIndex))
+                           (-> (Setof Symbol) (Listof Symbol))))
+(define (canonical-order items)
+  (define-predicate set-var? (Setof GaussianRandomVar))
+  (define-predicate set-index? (Setof ContinuousIndex))
+  (define-predicate set-sym? (Setof Symbol))
+  (sort (set->list items)
+        (cond [(set-var? items)
+               (λ ([ x : GaussianRandomVar ]
+                   [ y : GaussianRandomVar ])
+                 (symbol<? (RandomVar-name x) (RandomVar-name y)))]
+              [(set-index? items)
+               (λ ([ x : ContinuousIndex ]
+                   [ y : ContinuousIndex ])
+                 (symbol<? (car x) (car y)))]
+              [(set-sym? items) symbol<?])))
+
 ; Canonical Factors is the space where Normal Distributions
 ; can live while doing factor products and factor marginalisations.
 ; you can do a standard gaussian like so:
@@ -97,6 +118,10 @@
 ; > (flnormal-pdf 0.0 1.0 0.0 #f)
 ; - : Flonum
 ; 0.39894228040143265
+;
+; we order the variable-set used in ((CanonicalFactor ...) variable-set)
+; in alphabetical order by the RandomVar-name.  We asusme that the Matrix K
+; and Vector h obey this convention.
 (define-struct/exec CanonicalFactor
   ([scope : (Setof GaussianRandomVar)]
    [K : (Matrix Flonum)]
@@ -113,7 +138,8 @@
        (error "Canonical Factor ~a called with variables ~a which are outside of my scope: ~a"
               self values (CanonicalFactor-scope self)))
      (define X : (Matrix Float)
-       (->col-matrix (set-map values (λ ([x : ContinuousIndex]) (cdr x)))))
+       (->col-matrix (map (λ ([x : ContinuousIndex]) (cdr x))
+                          (canonical-order values))))
      (flexp (+ (CanonicalFactor-g self)
                (unpack (matrix* (->row-matrix (CanonicalFactor-h self)) X))
                (* -0.5
@@ -160,12 +186,78 @@
          (Setof AnyIndex)
          Float)])
 
-(define (partial-application-factor [factor : Factor]
+
+(: partial-application-factor (case-> (-> CanonicalFactor
+                                          (Setof ContinuousIndex)
+                                          CanonicalFactor)
+                                      (-> Factor (Setof AnyIndex) Factor)))
+(define (partial-application-factor factor evidence)
+  (define evidence-labels (set-map evidence (λ ([x : AnyIndex]) (car x))))
+  (cond [(CanonicalFactor? factor)
+         (define reduced-scope
+           (set-filter (λ ([v : GaussianRandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
+                       (CanonicalFactor-scope factor)))
+         (define scope-index (order-of-elems (canonical-order reduced-scope)
+                                             (canonical-order (CanonicalFactor-scope factor))))
+         (define evidence-names (~> evidence
+                                    set->list
+                                    (map (λ ([ x : ContinuousIndex ]) (car x)) _)
+                                    list->set
+                                    canonical-order))
+         (define evidence-index         
+           (order-of-elems (~> (set-subtract (CanonicalFactor-scope factor)
+                                             reduced-scope)
+                               (set-map _ (λ ([v : RandomVar]) (RandomVar-name v)))
+                               list->set
+                               canonical-order)
+                           evidence-names))
+                                                
+         (define K_scope (submatrix (CanonicalFactor-K factor)
+                                    scope-index
+                                    scope-index))
+         (define K_evidence (submatrix (CanonicalFactor-K factor)
+                                       evidence-index
+                                       evidence-index))
+         (define K_scope/evidence (submatrix (CanonicalFactor-K factor)
+                                             scope-index
+                                             evidence-index))
+         (define h (->col-matrix (CanonicalFactor-h factor)))
+         (define h_scope (~> h
+                             (submatrix _ scope-index (list 0))
+                             ->col-matrix))
+           
+         (define h_evidence (~> h
+                             (submatrix _ evidence-index (list 0))
+                             ->col-matrix))
+         (define evidence-vector (~> evidence
+                                     canonical-order
+                                     (map (λ ([x : ContinuousIndex]) (cdr x)) _)
+                                     ->col-matrix
+                                     (submatrix _ evidence-index (list 0))
+                                     ->col-matrix))
+         (CanonicalFactor reduced-scope
+                          K_scope
+                          (matrix->vector (matrix- h_scope
+                                                   (matrix* K_scope/evidence evidence-vector)))
+                          (+ (CanonicalFactor-g factor)
+                             (unpack (matrix* (matrix-transpose h_evidence) evidence-vector))
+                             (fl* -0.5 (unpack (matrix* (matrix-transpose evidence-vector) K_evidence evidence-vector)))))]
+                                    
+                                    
+        [(Factor? factor) factor]))
+  
+                                    
+
+(define (partial-application-factor-old [factor : Factor]
                                     [evidence : (Setof AnyIndex)]) : Factor
   (define evidence-labels (set-map evidence (λ ([x : AnyIndex]) (car x))))
   (define reduced-scope
     (set-filter (λ ([v : RandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
                 (Factor-scope factor)))
+  (define discrete-scope : (Setof DiscreteRandomVar)
+    (set-filter DiscreteRandomVar? reduced-scope))
+  (define continuous-scope : (Setof GaussianRandomVar)
+    (set-filter GaussianRandomVar? reduced-scope))
   (define reduced-evidence
     (set-filter (λ ([x : AnyIndex])
                   (set-member? (get-var-labels (Factor-scope factor)) (car x)))
