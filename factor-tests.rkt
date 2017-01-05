@@ -193,11 +193,44 @@
 
 (define (Factor-Marginalization)
   (define f (make-standard-gaussian (set x y)))
+  (define diff (make-DiscreteRandomVar 'diff (list "hard" "easy")))
+  (define iq (make-GaussianRandomVar 'iq))
+  (define cgrade (make-GaussianRandomVar 'grade))
+  (add-dependency! cgrade diff)
+  (add-dependency! cgrade iq)
+  (define f-grade
+    (Factor (set diff cgrade iq)
+                    (hash (set '(diff . "hard"))
+                          (list (cons 1. (make-gaussian (set cgrade iq) (vector 80. 110.) (matrix [[10. 0.] [0. 16.]]))))
+                          (set '(diff . "easy"))
+                          (list (cons 1. (make-gaussian (set cgrade iq) (vector 92. 100.) (matrix [[8. 0.] [0. 25.]])))))
+                    null))
+  (define f-grade-no-iq
+    (Factor (set diff cgrade)
+                    (hash (set '(diff . "hard"))
+                          (list (cons 1. (make-gaussian (set cgrade) (vector 80.) (matrix [[10.]]))))
+                          (set '(diff . "easy"))
+                          (list (cons 1. (make-gaussian (set cgrade) (vector 92.) (matrix [[8.]])))))
+                    null))
+  (define f-grade-no-iq* (factor-marginalization f-grade iq))
+  (define f-grade-no-iq-diff (factor-marginalization f-grade-no-iq diff))
+  
   (test-suite "Marginalizing a single variable from a factor"
               (test-= "Marginalizing a continuous random var across a CanonicalForm"
                       ((canonical-factor-marginalization f y) (set '(x . 0.)))
                       (flnormal-pdf 0. 1.0 0. #f)
+                      +TOLERANCE+)
+              (test-= "Marginalizing a continuous random var across a Factor"
+                      (f-grade-no-iq* (set '(diff . "hard") '(grade . 80.)))
+                      (f-grade-no-iq (set '(diff . "hard") '(grade . 80.)))
+                      +TOLERANCE+)
+              (test-= "Marginalizing a discrete random var across a Factor"
+                      (f-grade-no-iq-diff (set '(grade . 80.)))
+                      (fl* 0.5 (fl+ (flnormal-pdf 80. (flsqrt  10.) 80. #f)
+                                    (flnormal-pdf 92. (flsqrt 8.) 80. #f)))
                       +TOLERANCE+)))
+                           
+                           
 
 (run-tests Canonical-Factor-Evidence-Reduction)
 (run-tests Discrete-Factor-Evidence-Reduction)

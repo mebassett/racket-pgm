@@ -389,24 +389,16 @@
 (define (mixed-product [ fl : Float ]
                        [ mix : CanonicalMixture ]) : CanonicalMixture
   (map (λ ([ cm : (Pairof Float CanonicalFactor)])
-           (let ([f (cdr cm)])
-             (cons (car cm)
-                   (CanonicalFactor (CanonicalFactor-scope f)
-                                    (CanonicalFactor-K f)
-                                    (CanonicalFactor-h f)
-                                    (fl+ (fllog fl) (CanonicalFactor-g f))))))
+         (cons (fl* fl (car cm))
+               (cdr cm)))
        mix))
-  
+
 (define (canonical-mixture-product [cm1 : CanonicalMixture]
                                    [cm2 : CanonicalMixture]) : CanonicalMixture
-  (define normalization-factor
-    (flsum (for*/list : (Listof Float) ([pair1 cm1]
-                                        [pair2 cm2])
-             (fl* (car pair1) (car pair2)))))
   (for*/list : CanonicalMixture ([pair1 cm1]
                                  [pair2 cm2])
-    (cons (fl/ (fl* (car pair1) (car pair2)) normalization-factor)
-          (product-factor (cdr pair1) (cdr pair2)))))    
+    (cons (fl* (car pair1) (car pair2))
+          (product-factor (cdr pair1) (cdr pair2)))))
   
 
 (: product-factor (case-> (-> CanonicalFactor * CanonicalFactor)
@@ -472,8 +464,6 @@
                     ->col-matrix
                     (submatrix _ var-index (list 0))
                     ->col-matrix))
-  (displayln K_var-inv)
-  (displayln h_var)
   (CanonicalFactor reduced-scope
                    (matrix- K_reduced
                             (matrix* K_reduced/var K_var-inv K_var/reduced))
@@ -491,22 +481,22 @@
   (unless (set-member? (Factor-scope factor) var)
     (error "Variable ~a is not in the scope of Factor ~a" var factor))
   (define reduced-scope (set-subtract (Factor-scope factor) (set var)))
-  (cond [(GaussianRandomVar? var)
-         (define discrete-scope : (Setof DiscreteRandomVar) (set-filter DiscreteRandomVar? reduced-scope))
-         (Factor reduced-scope
-                 (for/hash : FactorData ([label-list (make-TableCPD-labels (set->list discrete-scope))])
-                   (let* ([label (list->set label-list)]
-                          [datum (hash-ref (Factor-data factor) label)])
-                     (values label
-                             (if (list? datum)
-                                 (map (λ ([pair : (Pairof Float CanonicalFactor)])
-                                        (cons (car pair) (canonical-factor-marginalization (cdr pair) var)))
-                                      datum)
-                                 datum ; unreachable but the type-checker doesn't know this. :(
-                                       ; since we are ensured by the unless clause that this
-                                       ; continuous var is in the scope of the factor, we know
-                                       ; datum is a CanonicalMixture and not a Float.
-                                 ))))
-                 null)]
-        [(DiscreteRandomVar? var)
-         factor]))
+  (define discrete-scope : (Setof DiscreteRandomVar) (set-filter DiscreteRandomVar? reduced-scope))
+  (Factor reduced-scope
+          (for/hash : FactorData ([label-list (make-TableCPD-labels (set->list discrete-scope))])
+            (let ([label (list->set label-list)])
+              (cond [(GaussianRandomVar? var)
+                     (let ([datum (hash-ref (Factor-data factor) label)])
+                       (values label
+                               (if (list? datum)
+                                   (map (λ ([pair : (Pairof Float CanonicalFactor)])
+                                          (cons (car pair) (canonical-factor-marginalization (cdr pair) var)))
+                                        datum)
+                                   datum ; unreachable but the type-checker doesn't know this. :(
+                                   ; since we are ensured by the unless clause that this
+                                   ; continuous var is in the scope of the factor, we know
+                                   ; datum is a CanonicalMixture and not a Float.
+                                   )))]
+                    [(DiscreteRandomVar? var)
+                     (values label 0.)])))
+          null))
