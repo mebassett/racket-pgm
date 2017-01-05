@@ -19,6 +19,7 @@
          make-standard-gaussian
          make-gaussian 
          partial-application-factor
+         product-factor
          FactorData
          (struct-out Factor))
 
@@ -226,7 +227,7 @@
                   [reduced-evidence-labels (list->set
                                             (filter (λ ([label : Symbol])
                                                       (set-member? var-labels label))
-                                                 evidence-labels))])
+                                                    evidence-labels))])
              (order-of-elems (canonical-order reduced-evidence-labels)
                              (canonical-order var-labels))))
                                              
@@ -309,7 +310,7 @@
                                          (cons (car x) (partial-application-factor (cdr x) continuous-evidence)))
                                        datum)
                                   datum)])))))
-(Factor reduced-scope new-data null)]))
+         (Factor reduced-scope new-data null)]))
              
 
 (define (labels-within-factor [f : Factor]
@@ -320,19 +321,95 @@
   (define (get-factor-symbols) : (Setof Symbol)
     (list->set (set-map (Factor-scope f) RandomVar-name)))
   (labels-within-scope (get-factor-symbols) labels))
-  
 
-(: product-factor (-> Factor * Factor))
+(: get-joint-scope (case-> (-> (Listof CanonicalFactor)  (Setof GaussianRandomVar))
+                           (-> (Listof Factor)  (Setof RandomVar))))
+(define (get-joint-scope factors)
+  (cond [(CanonicalFactor? (car factors))
+         (apply (curry (inst set-union GaussianRandomVar) 
+                       (ann (set) (Setof GaussianRandomVar)))
+                (map CanonicalFactor-scope factors))]
+        [(Factor? (car factors))
+         (apply (curry (inst set-union RandomVar) 
+                       (ann (set) (Setof RandomVar)))
+                (map Factor-scope factors))]))
+         
+
+(: joint-var-order (-> CanonicalFactor * (HashTable Integer GaussianRandomVar))) 
+(define (joint-var-order . factors)
+  (define joint-scope (get-joint-scope factors))
+  (for/hash : (HashTable Integer GaussianRandomVar)
+    ([i (in-range (set-count joint-scope))]
+     [var joint-scope])
+    (values i var)))
+
+(define (get-var-index [v : GaussianRandomVar]
+                       [f : CanonicalFactor]) : Integer
+  (unless (set-member? (CanonicalFactor-scope f) v)
+    (error "RandomVar ~a is not in scope ~a of Factor ~a" v (CanonicalFactor-scope f) f))
+  (car (order-of-elems (list v) (canonical-order (CanonicalFactor-scope f)))))
+
+(: sum-joint-K (-> CanonicalFactor * (Matrix Float)))
+(define (sum-joint-K . factors)
+  (define joint-scope (get-joint-scope factors))
+  (define index-var-lookup : (HashTable Integer GaussianRandomVar)
+    (apply joint-var-order factors))
+  (build-matrix (set-count joint-scope)
+                (set-count joint-scope)
+                (λ ([r : Integer] [c : Integer]) : Float
+                  (define r-var (hash-ref index-var-lookup r))
+                  (define c-var (hash-ref index-var-lookup c))
+                  (define elem-factors
+                    (set-filter (λ ([f : CanonicalFactor])
+                                  (and (set-member? (CanonicalFactor-scope f) r-var)
+                                       (set-member? (CanonicalFactor-scope f) c-var)))
+                                (list->set factors)))
+                  (flsum (set-map elem-factors (λ ([f : CanonicalFactor])
+                                                 (matrix-ref (CanonicalFactor-K f)
+                                                             (get-var-index r-var f)
+                                                             (get-var-index c-var f))))))))
+
+(: sum-joint-h (-> CanonicalFactor * (Vectorof Float)))
+(define (sum-joint-h . factors)
+  (define joint-scope (get-joint-scope factors))
+  (define index-var-lookup : (HashTable Integer GaussianRandomVar)
+    (apply joint-var-order factors))
+  (for/vector : (Vectorof Float)
+    ([var joint-scope])
+    (define elem-factors
+      (set-filter (λ ([f : CanonicalFactor])
+                    (set-member? (CanonicalFactor-scope f) var))
+                  (list->set factors)))
+    (flsum (set-map elem-factors (λ ([f : CanonicalFactor])
+                                   (vector-ref (CanonicalFactor-h f)
+                                               (get-var-index var f)))))))
+
+
+(: product-factor (case-> (-> CanonicalFactor * CanonicalFactor)
+                          (-> Factor * Factor)))
 (define (product-factor . factors)
-  (define (helper [f1 : Factor]
-                  [f2 : Factor]) : Factor
-    (Factor (set-union (Factor-scope f1) (Factor-scope f2))
-            (ann (make-hash) FactorData)
-            (λ ([var-values : (Setof AnyIndex)]) : Float
-              (fl* (f1 (labels-within-factor f1 var-values))
-                   (f2 (labels-within-factor f2 var-values))))))
-  (foldl helper (car factors) (cdr factors)))
-  
+  (cond [(CanonicalFactor? (car factors))
+         (define joint-scope (get-joint-scope factors))
+         (CanonicalFactor joint-scope
+                          (apply sum-joint-K factors)
+                          (apply sum-joint-h factors)
+                          (flsum (map CanonicalFactor-g factors)))]
+        [(Factor? (car factors))
+         (car factors)]))
+
+                                             
+
+;(: product-factor (-> Factor * Factor))
+;(define (product-factor . factors)
+;  (define (helper [f1 : Factor]
+;                  [f2 : Factor]) : Factor
+;    (Factor (set-union (Factor-scope f1) (Factor-scope f2))
+;            (ann (make-hash) FactorData)
+;            (λ ([var-values : (Setof AnyIndex)]) : Float
+;              (fl* (f1 (labels-within-factor f1 var-values))
+;                   (f2 (labels-within-factor f2 var-values))))))
+;  (foldl helper (car factors) (cdr factors)))
+;  
 (define (factor-marginalization [factor : Factor]
                                 [var : RandomVar]) : Factor
   (unless (set-member? (Factor-scope factor) var)
@@ -345,6 +422,4 @@
                       
   
   factor)
-
-                                
 

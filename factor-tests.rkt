@@ -136,9 +136,23 @@
                       (cgrade-when-easy-and-intelligent (set '(grade . 96.0) '(health . 0.99)))
                       (continuous-grade-factor (set '(health . 0.99) '(iq . 130.0) '(difficulty . "easy") '(grade . 96.0)))
                       +TOLERANCE+)))
-              
+
+(define (Canonical-Factor-Product)
+  (define f1 (CanonicalFactor (set x y) (matrix [[1. 2.] [0. 3.]]) (vector 0. 0.) 0.))
+  (define f2 (CanonicalFactor (set y z) (matrix [[0. 0.] [1. 0.]]) (vector 0. 0.) 0.))
+  (define f3 (CanonicalFactor (set x z) (matrix [[-1. -1.] [-1. -1.]]) (vector 0. 0.) 0.))
+  (define f4 (make-standard-gaussian (set x)))
+  (define f5 (make-standard-gaussian (set y))) 
+  (test-suite "Products on Canonical Factors"
+              ;(test-check "Matrix join 1" matrix= (sum-joint-K f1 f3) (matrix [[0. 2. -1.] [0. 3. 0.] [-1. 0. -1.]]))
+              ;(test-check "Matrix join 2" matrix= (sum-joint-K f1 f2) (matrix [[1. 2. 0.] [0. 3. 0.] [0. 1. 0.]]))
+              (test-= "Products on Canonical Factors"
+                      ((product-factor f4 f5) (set '(x . 0.0) '(y . 0.)))
+                      (fl* (f4 (set '(x . .0))) (f5 (set '(y . 0.))))
+                      +TOLERANCE+)))
 
 (run-tests Canonical-Factor-Evidence-Reduction)
 (run-tests Discrete-Factor-Evidence-Reduction)
 (run-tests Factor-Evidence-Reduction)
+(run-tests (Canonical-Factor-Product))
 
