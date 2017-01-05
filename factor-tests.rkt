@@ -53,6 +53,8 @@
 (define difficulty (make-DiscreteRandomVar 'difficulty '("hard" "easy")))
 (define grade (make-DiscreteRandomVar 'grade '("a" "b" "f")))
 (define intelligence (make-DiscreteRandomVar 'iq '("high" "low")))
+(define SAT (make-DiscreteRandomVar 'SAT '("high" "low")))
+(add-dependency! SAT intelligence)
 (add-dependency! grade difficulty)
 (add-dependency! grade intelligence)
 (define grade-hash
@@ -71,11 +73,25 @@
         (((iq . "high") (difficulty . "hard") (grade . "f")) . 0.2)
         ))
 
+(define sat-hash
+  #hash(
+       (((SAT . "low") (iq . "low")) . 0.95)
+       (((SAT . "high") (iq . "low")) . 0.05)
+       (((iq . "high") (SAT . "low")) . 0.2)
+       (((iq . "high") (SAT . "high")) . 0.8)
+       ))
+
 (define grade-factor
   (Factor (set grade difficulty intelligence)
           (for/hash : FactorData ([(k v) grade-hash])
             (values (list->set k) v))
           null))
+(define sat-factor
+  (Factor (set SAT intelligence)
+          (for/hash : FactorData ([(k v) sat-hash])
+            (values (list->set k) v))
+          null))
+  
 (define grade-iq-high (partial-application-factor grade-factor (set '(iq . "high"))))         
 
 (define Discrete-Factor-Evidence-Reduction
@@ -91,12 +107,22 @@
                         (thunk (grade-iq-high (set '(iq . "high") '(difficulty . "hard") '(grade . "f")))))))
 
 (define continuous-grade (make-GaussianRandomVar 'grade))
+(define continuous-SAT (make-GaussianRandomVar 'SAT))
 (define health (make-GaussianRandomVar 'health))
 (define continuous-intelligence (make-GaussianRandomVar 'iq))
 
 (add-dependency! continuous-grade health)
 (add-dependency! continuous-grade continuous-intelligence)
 (add-dependency! continuous-grade difficulty)
+
+(add-dependency! continuous-SAT continuous-intelligence)
+
+(define continuous-SAT-factor
+  (Factor (set continuous-SAT continuous-intelligence)
+          (hash (ann (set) (Setof TableCPDIndex))
+                (list (cons 1.0
+                            (make-standard-gaussian (set continuous-intelligence continuous-SAT)))))
+          null))
 
 (define continuous-grade-factor
   (Factor (set continuous-grade continuous-intelligence health difficulty)
@@ -151,8 +177,26 @@
                       (fl* (f4 (set '(x . .0))) (f5 (set '(y . 0.))))
                       +TOLERANCE+)))
 
+(define Factor-Product
+  (test-suite "Products on Factors"
+              (test-= "Product on two discrete factors"
+                      ((product-factor grade-factor sat-factor) (set '(SAT . "low") '(iq . "high") '(difficulty . "hard") '(grade . "f")))
+                      (fl* (sat-factor (set '(SAT . "low") '(iq . "high"))) (grade-factor (set '(iq . "high") '(difficulty . "hard") '(grade . "f"))))
+                      +TOLERANCE+)
+              (test-= "Product on a discrete factor and a mixed/continuous factor"
+                      ((product-factor continuous-SAT-factor cgrade-when-low-health)
+                       (set '(grade . 65.0) '(SAT . 0.0)
+                            '(iq . 0.0) '(difficulty . "hard")))
+                      (fl* (cgrade-when-low-health (set '(grade . 65.0) '(iq . 0.0) '(difficulty . "hard")))
+                           (continuous-SAT-factor (set '(iq . 0.0) '(SAT . 0.0))))
+                      +TOLERANCE+)
+
+                      )
+  )
+
 (run-tests Canonical-Factor-Evidence-Reduction)
 (run-tests Discrete-Factor-Evidence-Reduction)
 (run-tests Factor-Evidence-Reduction)
 (run-tests (Canonical-Factor-Product))
+(run-tests Factor-Product)
 

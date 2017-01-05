@@ -384,6 +384,28 @@
                                    (vector-ref (CanonicalFactor-h f)
                                                (get-var-index var f)))))))
 
+(define (mixed-product [ fl : Float ]
+                       [ mix : CanonicalMixture ]) : CanonicalMixture
+  (map (λ ([ cm : (Pairof Float CanonicalFactor)])
+           (let ([f (cdr cm)])
+             (cons (car cm)
+                   (CanonicalFactor (CanonicalFactor-scope f)
+                                    (CanonicalFactor-K f)
+                                    (CanonicalFactor-h f)
+                                    (fl+ (fllog fl) (CanonicalFactor-g f))))))
+       mix))
+  
+(define (canonical-mixture-product [cm1 : CanonicalMixture]
+                                   [cm2 : CanonicalMixture]) : CanonicalMixture
+  (define normalization-factor
+    (flsum (for*/list : (Listof Float) ([pair1 cm1]
+                                        [pair2 cm2])
+             (fl* (car pair1) (car pair2)))))
+  (for*/list : CanonicalMixture ([pair1 cm1]
+                                 [pair2 cm2])
+    (cons (fl/ (fl* (car pair1) (car pair2)) normalization-factor)
+          (product-factor (cdr pair1) (cdr pair2)))))    
+  
 
 (: product-factor (case-> (-> CanonicalFactor * CanonicalFactor)
                           (-> Factor * Factor)))
@@ -395,21 +417,38 @@
                           (apply sum-joint-h factors)
                           (flsum (map CanonicalFactor-g factors)))]
         [(Factor? (car factors))
-         (car factors)]))
+         (define (single-product [f1 : Factor]
+                                 [f2 : Factor]) : Factor
+           (define joint-scope (get-joint-scope factors))
+           (define discrete-scope : (Setof DiscreteRandomVar) (set-filter DiscreteRandomVar? joint-scope))
+           (define continuous-scope : (Setof GaussianRandomVar) (set-filter GaussianRandomVar? joint-scope))
+           (define new-data
+             (for/hash : FactorData ([label-list (make-TableCPD-labels (set->list discrete-scope))])
+               (let* ([label (list->set label-list)]
+                      [data1 : FactorData (Factor-data f1)]
+                      [data2 : FactorData (Factor-data f2)]
+                      [label1 : (Setof TableCPDIndex) (set-filter TableCPDIndex?
+                                                                  (labels-within-factor f1 label))]
+                      [label2 : (Setof TableCPDIndex) (set-filter TableCPDIndex?
+                                                                  (labels-within-factor f2 label))]
+                      [val1 : (U Float CanonicalMixture) (hash-ref data1
+                                                                   label1)]
+                      [val2 : (U Float CanonicalMixture) (hash-ref data2
+                                                                   label2)])
+                 (values label (cond [(and (flonum? val1) (flonum? val2))
+                                      (fl* val1 val2)]
+                                     [(and (list? val1) (flonum? val2))
+                                      (mixed-product val2 val1)]
+                                     [(and (list? val2) (flonum? val1))
+                                      (mixed-product val1 val2)]
+                                     [(and (list? val1) (list? val2))
+                                      (canonical-mixture-product val1 val2)]
+                                     [else 0.] ;unreachable, but makes type-checker happy.
+                                     )))))
+           (Factor joint-scope new-data null))
+         (foldl single-product (car factors) (cdr factors))]))
 
-                                             
 
-;(: product-factor (-> Factor * Factor))
-;(define (product-factor . factors)
-;  (define (helper [f1 : Factor]
-;                  [f2 : Factor]) : Factor
-;    (Factor (set-union (Factor-scope f1) (Factor-scope f2))
-;            (ann (make-hash) FactorData)
-;            (λ ([var-values : (Setof AnyIndex)]) : Float
-;              (fl* (f1 (labels-within-factor f1 var-values))
-;                   (f2 (labels-within-factor f2 var-values))))))
-;  (foldl helper (car factors) (cdr factors)))
-;  
 (define (factor-marginalization [factor : Factor]
                                 [var : RandomVar]) : Factor
   (unless (set-member? (Factor-scope factor) var)
