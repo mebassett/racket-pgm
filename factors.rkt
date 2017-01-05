@@ -16,7 +16,10 @@
          is-valid-cpd?
          (struct-out DiscreteFactor)
          (struct-out CanonicalFactor)
+         make-standard-gaussian
+         make-gaussian 
          partial-application-factor
+         FactorData
          (struct-out Factor))
 
 
@@ -148,6 +151,24 @@
                                    X))))))
    : (-> CanonicalFactor (Setof ContinuousIndex) Float)])
 
+(define (make-standard-gaussian [vars : (Setof GaussianRandomVar)]) : CanonicalFactor
+  (CanonicalFactor vars
+                   (identity-matrix (set-count vars) 1.0 0.0)
+                   (list->vector (set-map vars (λ (x) 0.0)))
+                   (- (fllog (flexpt (* 2.0 pi) (/ (->fl (set-count vars)) 2))))))
+
+(define (make-gaussian [vars : (Setof GaussianRandomVar)]
+                       [means : (Vectorof Float)]
+                       [Σ : (Matrix Float)]) : CanonicalFactor
+  (define K (matrix-inverse Σ))
+  (define μ (->col-matrix means))
+  (define h (matrix* K μ))
+  (define g (- (- (* 0.5 (unpack (matrix* (matrix-transpose μ) K μ))))
+               (fllog (* (flsqrt (matrix-determinant Σ))
+                         (flexpt (* 2.0 pi) (/ (->fl (set-count vars)) 2.0))))))
+  (CanonicalFactor vars K (matrix->vector h) g))
+                  
+
 (define-type CanonicalMixture (Listof (Pairof Float CanonicalFactor)))
 (define-type FactorData (HashTable (Setof TableCPDIndex)
                                    (U Float CanonicalMixture)))
@@ -197,6 +218,18 @@
          (define reduced-scope
            (set-filter (λ ([v : GaussianRandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
                        (CanonicalFactor-scope factor)))
+         (define reduced-evidence-labels (filter (λ ([label : Symbol])
+                                                   (member label (set-map (CanonicalFactor-scope factor) RandomVar-name)))
+                                                 evidence-labels))
+         (define reduced-evidence-index
+           (let* ([var-labels (list->set (set-map (CanonicalFactor-scope factor) RandomVar-name))]
+                  [reduced-evidence-labels (list->set
+                                            (filter (λ ([label : Symbol])
+                                                      (set-member? var-labels label))
+                                                 evidence-labels))])
+             (order-of-elems (canonical-order reduced-evidence-labels)
+                             (canonical-order var-labels))))
+                                             
          (define scope-index (order-of-elems (canonical-order reduced-scope)
                                              (canonical-order (CanonicalFactor-scope factor))))
          (define evidence-names (~> evidence
@@ -216,19 +249,19 @@
                                     scope-index
                                     scope-index))
          (define K_evidence (submatrix (CanonicalFactor-K factor)
-                                       evidence-index
-                                       evidence-index))
+                                       reduced-evidence-index
+                                       reduced-evidence-index))
          (define K_scope/evidence (submatrix (CanonicalFactor-K factor)
                                              scope-index
-                                             evidence-index))
+                                             reduced-evidence-index))
          (define h (->col-matrix (CanonicalFactor-h factor)))
          (define h_scope (~> h
                              (submatrix _ scope-index (list 0))
                              ->col-matrix))
            
          (define h_evidence (~> h
-                             (submatrix _ evidence-index (list 0))
-                             ->col-matrix))
+                                (submatrix _ reduced-evidence-index (list 0))
+                                ->col-matrix))
          (define evidence-vector (~> evidence
                                      canonical-order
                                      (map (λ ([x : ContinuousIndex]) (cdr x)) _)
@@ -241,37 +274,49 @@
                                                    (matrix* K_scope/evidence evidence-vector)))
                           (+ (CanonicalFactor-g factor)
                              (unpack (matrix* (matrix-transpose h_evidence) evidence-vector))
-                             (fl* -0.5 (unpack (matrix* (matrix-transpose evidence-vector) K_evidence evidence-vector)))))]
+                             (fl* -0.5 (unpack (matrix* (matrix-transpose evidence-vector) K_evidence evidence-vector)))))]                                    
                                     
-                                    
-        [(Factor? factor) factor]))
-  
-                                    
-
-(define (partial-application-factor-old [factor : Factor]
-                                    [evidence : (Setof AnyIndex)]) : Factor
-  (define evidence-labels (set-map evidence (λ ([x : AnyIndex]) (car x))))
-  (define reduced-scope
-    (set-filter (λ ([v : RandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
-                (Factor-scope factor)))
-  (define discrete-scope : (Setof DiscreteRandomVar)
-    (set-filter DiscreteRandomVar? reduced-scope))
-  (define continuous-scope : (Setof GaussianRandomVar)
-    (set-filter GaussianRandomVar? reduced-scope))
-  (define reduced-evidence
-    (set-filter (λ ([x : AnyIndex])
-                  (set-member? (get-var-labels (Factor-scope factor)) (car x)))
-                evidence))
-  (Factor reduced-scope
-          (ann (make-hash) FactorData)
-          (λ ([var-values : (Setof AnyIndex)]) : Float
-            (factor (set-union var-values reduced-evidence)))))
+        [(Factor? factor)
+         (define reduced-scope
+           (set-filter (λ ([v : RandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
+                       (Factor-scope factor)))
+         (define discrete-scope : (Setof DiscreteRandomVar)
+           (set-filter DiscreteRandomVar? reduced-scope))
+         (define continuous-scope : (Setof GaussianRandomVar)
+           (set-filter GaussianRandomVar? reduced-scope))
+         (define reduced-evidence
+           (set-filter (λ ([evi : AnyIndex])
+                         (set-member? (list->set (set-map (Factor-scope factor)
+                                                          RandomVar-name))
+                                      (car evi)))
+                       evidence))
+         (define discrete-evidence : (Setof TableCPDIndex)
+           (set-filter TableCPDIndex? reduced-evidence))
+         (define continuous-evidence : (Setof ContinuousIndex)
+           (set-filter ContinuousIndex? reduced-evidence))
+         (define new-data
+           (for/hash : FactorData
+             ([list-labels (make-TableCPD-labels (set->list discrete-scope))])
+             (let ([datum : (U Float CanonicalMixture)
+                          (hash-ref (Factor-data factor)
+                                    (set-union (list->set list-labels)
+                                               discrete-evidence))])
+               (values (list->set list-labels)
+                       (cond [(flonum? datum) datum]
+                             [(list? datum)
+                              (if (> (set-count continuous-evidence) 0)
+                                  (map (λ ([ x : (Pairof Float CanonicalFactor)])
+                                         (cons (car x) (partial-application-factor (cdr x) continuous-evidence)))
+                                       datum)
+                                  datum)])))))
+(Factor reduced-scope new-data null)]))
+             
 
 (define (labels-within-factor [f : Factor]
                               [labels : (Setof AnyIndex)]) : (Setof AnyIndex)
   (define (labels-within-scope [symbols : (Setof Symbol)]
                                [labels : (Setof AnyIndex)]) : (Setof AnyIndex)
-     (set-filter (λ ([x : AnyIndex]) (set-member? symbols (car x))) labels))
+    (set-filter (λ ([x : AnyIndex]) (set-member? symbols (car x))) labels))
   (define (get-factor-symbols) : (Setof Symbol)
     (list->set (set-map (Factor-scope f) RandomVar-name)))
   (labels-within-scope (get-factor-symbols) labels))
