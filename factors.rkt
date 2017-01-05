@@ -20,6 +20,8 @@
          make-gaussian 
          partial-application-factor
          product-factor
+         canonical-factor-marginalization
+         factor-marginalization
          FactorData
          (struct-out Factor))
 
@@ -448,17 +450,63 @@
            (Factor joint-scope new-data null))
          (foldl single-product (car factors) (cdr factors))]))
 
-
+(define (canonical-factor-marginalization [factor : CanonicalFactor]
+                                          [var : GaussianRandomVar]) : CanonicalFactor
+  (unless (set-member? (CanonicalFactor-scope factor) var)
+    (error "Variable ~a is not in the scope of Factor ~a" var factor))
+  (define reduced-scope (set-subtract (CanonicalFactor-scope factor) (set var)))
+  (define reduced-order (order-of-elems (canonical-order reduced-scope)
+                                        (canonical-order (CanonicalFactor-scope factor))))
+  (define var-index (order-of-elems (list var)
+                                    (canonical-order (CanonicalFactor-scope factor))))
+  (define K (CanonicalFactor-K factor))
+  (define K_reduced (submatrix K reduced-order reduced-order))
+  (define K_reduced/var (submatrix K reduced-order var-index))
+  (define K_var-inv (matrix-inverse (submatrix K var-index var-index)))
+  (define K_var/reduced (submatrix K var-index reduced-order))
+  (define h_reduced (~> (CanonicalFactor-h factor)
+                        ->col-matrix
+                        (submatrix _ reduced-order (list 0))
+                        ->col-matrix))
+  (define h_var (~> (CanonicalFactor-h factor)
+                    ->col-matrix
+                    (submatrix _ var-index (list 0))
+                    ->col-matrix))
+  (displayln K_var-inv)
+  (displayln h_var)
+  (CanonicalFactor reduced-scope
+                   (matrix- K_reduced
+                            (matrix* K_reduced/var K_var-inv K_var/reduced))
+                   (matrix->vector (matrix- h_reduced
+                                            (matrix* K_reduced/var K_var-inv h_var)))
+                   (fl+ (CanonicalFactor-g factor)
+                        (fl* 0.5
+                             (fl+ (fllog (fl* (fl* 2. pi) (unpack K_var-inv)))
+                                  (unpack (matrix* (matrix-transpose h_var)
+                                                   K_var-inv
+                                                   h_var)))))))
+      
 (define (factor-marginalization [factor : Factor]
-                                [var : RandomVar]) : Factor
+                                [var : (U DiscreteRandomVar GaussianRandomVar)]) : Factor
   (unless (set-member? (Factor-scope factor) var)
     (error "Variable ~a is not in the scope of Factor ~a" var factor))
-  ;(cond [(DiscreteRandomVar? var)
-  ;       (Factor (set-subtract (Factor-scope var))
-  ;               (ann (make-hash) FactorData)
-  ;               (λ ([var-values : (Setof AnyIndex)]) : Float
-                   
-                      
-  
-  factor)
-
+  (define reduced-scope (set-subtract (Factor-scope factor) (set var)))
+  (cond [(GaussianRandomVar? var)
+         (define discrete-scope : (Setof DiscreteRandomVar) (set-filter DiscreteRandomVar? reduced-scope))
+         (Factor reduced-scope
+                 (for/hash : FactorData ([label-list (make-TableCPD-labels (set->list discrete-scope))])
+                   (let* ([label (list->set label-list)]
+                          [datum (hash-ref (Factor-data factor) label)])
+                     (values label
+                             (if (list? datum)
+                                 (map (λ ([pair : (Pairof Float CanonicalFactor)])
+                                        (cons (car pair) (canonical-factor-marginalization (cdr pair) var)))
+                                      datum)
+                                 datum ; unreachable but the type-checker doesn't know this. :(
+                                       ; since we are ensured by the unless clause that this
+                                       ; continuous var is in the scope of the factor, we know
+                                       ; datum is a CanonicalMixture and not a Float.
+                                 ))))
+                 null)]
+        [(DiscreteRandomVar? var)
+         factor]))

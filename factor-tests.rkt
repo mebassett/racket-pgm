@@ -189,14 +189,20 @@
                             '(iq . 0.0) '(difficulty . "hard")))
                       (fl* (cgrade-when-low-health (set '(grade . 65.0) '(iq . 0.0) '(difficulty . "hard")))
                            (continuous-SAT-factor (set '(iq . 0.0) '(SAT . 0.0))))
-                      +TOLERANCE+)
+                      +TOLERANCE+)))
 
-                      )
-  )
+(define (Factor-Marginalization)
+  (define f (make-standard-gaussian (set x y)))
+  (test-suite "Marginalizing a single variable from a factor"
+              (test-= "Marginalizing a continuous random var across a CanonicalForm"
+                      ((canonical-factor-marginalization f y) (set '(x . 0.)))
+                      (flnormal-pdf 0. 1.0 0. #f)
+                      +TOLERANCE+)))
 
 (run-tests Canonical-Factor-Evidence-Reduction)
 (run-tests Discrete-Factor-Evidence-Reduction)
 (run-tests Factor-Evidence-Reduction)
 (run-tests (Canonical-Factor-Product))
 (run-tests Factor-Product)
+(run-tests (Factor-Marginalization))
 
