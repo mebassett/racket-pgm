@@ -23,6 +23,7 @@
          canonical-factor-marginalization
          factor-marginalization
          FactorData
+         CanonicalMixture
          (struct-out Factor))
 
 
@@ -173,6 +174,7 @@
                   
 
 (define-type CanonicalMixture (Listof (Pairof Float CanonicalFactor)))
+
 (define-type FactorData (HashTable (Setof TableCPDIndex)
                                    (U Float CanonicalMixture)))
 
@@ -197,8 +199,8 @@
      (if (null? (Factor-func self))
          (let ([factor (hash-ref (Factor-data self) discrete-values)])
            (cond [(list? factor)
-                  (foldl fl*
-                         1.0
+                  (foldl fl+
+                         0.0
                          (map (λ ([weighted-cfactor : (Pairof Float CanonicalFactor)])
                                 (fl* (car weighted-cfactor)
                                      ((cdr weighted-cfactor) continuous-values)))
@@ -475,7 +477,10 @@
                                   (unpack (matrix* (matrix-transpose h_var)
                                                    K_var-inv
                                                    h_var)))))))
-      
+
+(define (canonical-mixture-sum [mixes : (Listof CanonicalMixture)]) : CanonicalMixture
+  (apply append mixes))
+
 (define (factor-marginalization [factor : Factor]
                                 [var : (U DiscreteRandomVar GaussianRandomVar)]) : Factor
   (unless (set-member? (Factor-scope factor) var)
@@ -498,5 +503,20 @@
                                    ; datum is a CanonicalMixture and not a Float.
                                    )))]
                     [(DiscreteRandomVar? var)
-                     (values label 0.)])))
+                     (let* ([var-indexes (get-cpd-labels var)]
+                            [data : (Listof (U Float CanonicalMixture))
+                                  (map (λ ([index : (Setof TableCPDIndex)])
+                                         (hash-ref (Factor-data factor)
+                                                   (set-union label index)))
+                                       (set->list var-indexes))]
+                            [non-floats (for/list : (Listof CanonicalMixture)
+                                          ([i data]
+                                           #:when (not (flonum? i)))
+                                          i)]
+                            [datum (if (flonum? (car data))
+                                       (flsum (filter flonum? data))
+                                       ; if the first is a Float, the rest will be floats
+                                       ; though the compiler does not know this
+                                       (canonical-mixture-sum non-floats))])
+                       (values label datum))])))
           null))
