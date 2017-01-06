@@ -489,11 +489,16 @@
 ;
 (define (eliminate-variable [factors : (Setof Factor)]
                             [vars : (Setof RandomVar)]) : Factor
+  (define list-of-vars (sort (set->list vars)
+                             (λ ([var1 : RandomVar]
+                                 [var2 : RandomVar])
+                               (< (length (RandomVar-influences var1))
+                                  (length (RandomVar-influences var2))))))
   (apply product-factor (set->list (foldl (λ ([var : RandomVar]
                                               [fs : (Setof Factor)]) : (Setof Factor)
                                             (sum-product-eliminate-var fs var))
                                           factors
-                                          (set->list vars)))))
+                                          list-of-vars))))
 
 (define (factor-marginalization [factor : Factor]
                                 [var : RandomVar]) : Factor
