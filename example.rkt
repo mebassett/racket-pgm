@@ -1,5 +1,5 @@
 #lang typed/racket
-(require "model.rkt" "random-var.rkt")
+(require "model.rkt" "random-var.rkt" "factors.rkt")
 
 
 ; step 1 - let's define some discrete random variables.
@@ -8,9 +8,10 @@
 
 (define difficulty (make-DiscreteRandomVar 'difficulty '("hard" "easy")))
 (define grade (make-DiscreteRandomVar 'grade '("a" "b" "f")))
+(define intelligence (make-DiscreteRandomVar 'iq '("high" "low")))
 (define SAT (make-DiscreteRandomVar 'SAT '("high" "low")))
 (define letter (make-DiscreteRandomVar 'letter '("good" "poor")))
-(define intelligence (make-DiscreteRandomVar 'iq '("high" "low")))
+
 
 ; okay, now let's make it a directed graphical model by adding some dependencies!
 
@@ -35,9 +36,9 @@
 ; now, we don't really want uniform distributions.  So we will updated each
 ; cpd with values from the book.
 
-(update-cpd! model difficulty #hash((((difficulty . "hard")) . 0.4) (((difficulty . "easy")) . 0.6)))
-(update-cpd! model intelligence #hash((((iq . "high")) . 0.3) (((iq . "low")) . 0.7)))
-(update-cpd! model grade 
+(update-cpd! model difficulty (make-factor-from-table difficulty #hash((((difficulty . "hard")) . 0.4) (((difficulty . "easy")) . 0.6))))
+(update-cpd! model intelligence (make-factor-from-table intelligence #hash((((iq . "high")) . 0.3) (((iq . "low")) . 0.7))))
+(update-cpd! model grade (make-factor-from-table grade
 #hash(
        (((difficulty . "easy") (iq . "low") (grade . "a")) . 0.3)
        (((grade . "b") (difficulty . "easy") (iq . "low")) . 0.4)
@@ -51,15 +52,15 @@
        (((iq . "high") (difficulty . "hard") (grade . "a")) . 0.5)
        (((iq . "high") (difficulty . "hard") (grade . "b")) . 0.3)
        (((iq . "high") (difficulty . "hard") (grade . "f")) . 0.2)
-       ))
-(update-cpd! model SAT 
+       )))
+(update-cpd! model SAT (make-factor-from-table SAT
 #hash(
        (((SAT . "low") (iq . "low")) . 0.95)
        (((SAT . "high") (iq . "low")) . 0.05)
        (((iq . "high") (SAT . "low")) . 0.2)
        (((iq . "high") (SAT . "high")) . 0.8)
-       ))
-(update-cpd! model letter
+       )))
+(update-cpd! model letter (make-factor-from-table letter
     #hash(
        (((letter . "poor") (grade . "a")) . 0.1)
        (((letter . "good") (grade . "a")) . 0.9)
@@ -67,7 +68,7 @@
        (((grade . "b") (letter . "good")) . 0.6)
        (((grade . "f") (letter . "poor")) . 0.99)
        (((grade . "f") (letter . "good")) . 0.01)
-       ))
+       )))
 
 ; so the data structures I'm using here are pretty wonky.
 ; it would probably be best if I had some notion of an instance of
@@ -77,7 +78,7 @@
 
 ; Anyhow.  Onwards and upwards.
 
-(is-valid-model? model)
+;(is-valid-model? model)
 
 ; let's hope that returns true!  That just checks to make sure all CPDs exists
 ; and are sane.  Let's try some inferrence now:
@@ -88,6 +89,8 @@
                                                              '(SAT . "high")))
  (set '(grade . "f")))
 
+; should be 0.26363636363636367 or thereabouts
+
 ; you can see there that I am using a (Pairof RandomVar Symbol) to keep track of
 ; which variable is initiated to what.
 ; you can also see that the student does not have too high of a probablity of failing.
@@ -96,9 +99,11 @@
 ; what about the probability the course is hard
 ; given that he got a good letter and has good SATs?
 
-((probability-conditioned-on-evidence model (set difficulty) (set '(SAT . "high")
-                                                             '(letter . "good")))
+((probability-conditioned-on-evidence model (set difficulty)
+                                      (set '(SAT . "high")
+                                           '(letter . "good")))
  (set '(difficulty . "hard")))
 
+; should be 0.3209440506070644 or thereabouts.
 ; that's all for now!
 

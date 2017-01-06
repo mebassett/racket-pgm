@@ -11,17 +11,22 @@
          TableCPDIndex?
          AnyIndex
          AnyIndex?
-         TableCPD
+        
          generate-uniform-table-cpd
          is-valid-cpd?
          (struct-out DiscreteFactor)
          (struct-out CanonicalFactor)
          make-standard-gaussian
-         make-gaussian 
+         make-gaussian
+         standard-gaussian-factor
+         gaussian-factor
          partial-application-factor
          product-factor
          canonical-factor-marginalization
          factor-marginalization
+         normalize-factor
+         eliminate-variable
+         make-factor-from-table
          FactorData
          CanonicalMixture
          (struct-out Factor))
@@ -31,8 +36,6 @@
 (define-predicate ContinuousIndex? ContinuousIndex)
 
 (define-type TableCPDIndex (Pairof Symbol String))
-(define-type TableCPD (HashTable (Setof TableCPDIndex)
-                                 Float))
 (define-predicate TableCPDIndex? TableCPDIndex)
 
 (define-type AnyIndex (U ContinuousIndex TableCPDIndex))
@@ -51,32 +54,13 @@
                                        (cons var (RandomVar-depends-on var))))])
      (list->set i))))
 
-
-
-(define (generate-uniform-table-cpd [var : DiscreteRandomVar]) : TableCPD
-  (for/hash : TableCPD ([k (make-TableCPD-labels (filter DiscreteRandomVar?
-                                                         (cons var (RandomVar-depends-on var))))])
-    (values (list->set k)
-            (exact->inexact (/ 1 (length (DiscreteRandomVar-labels var)))))))
-
-(define (is-valid-cpd? [var : DiscreteRandomVar]
-                       [cpd : TableCPD]) : Boolean
-  (define (all-cells-exists?) : Boolean
-    (equal? (list->set (hash-keys cpd))
-            (list->set (for/list : (Listof (Setof (Pair Symbol String)))
-                         ([l (make-TableCPD-labels (filter DiscreteRandomVar?
-                                                           (cons var (RandomVar-depends-on var))))])
-                         (list->set l)))))
-  (define (rows-sum-to-one?) : Boolean
-    (define rows (make-TableCPD-labels (filter DiscreteRandomVar? (RandomVar-depends-on var))))
-    (define (sum-cell-row [pre-cellkeys : (Listof TableCPDIndex)]) : Float
-      (flsum (map (λ ([cellkey : (Listof TableCPDIndex)]) (hash-ref cpd (list->set cellkey)))
-                  (map (λ ([col : String])
-                         (cons (cons (RandomVar-name var) col) pre-cellkeys))
-                       (DiscreteRandomVar-labels var)))))
-    (andmap (λ ([row : (Listof TableCPDIndex)]) (= (sum-cell-row row) 1)) rows))
-  (and (all-cells-exists?)
-       (rows-sum-to-one?)))
+(define (is-valid-cpd? [var : RandomVar]
+                       [factor : Factor]) : Boolean
+  ; this function used to do more, like making sure everything in a TableCPD
+  ; had the write sums.  I don't know a clear way of ensuring that a Factor
+  ; is an actual probablity anymore now that I have factors represented as
+  ; tables of CanonicalMixtures.  So now I just check that everything is in scope.
+  (subset? (list->set (RandomVar-depends-on var)) (Factor-scope factor)))
 
 (define-struct/exec DiscreteFactor
   ([scope : (Setof (Setof TableCPDIndex))]
@@ -160,6 +144,10 @@
                    (identity-matrix (set-count vars) 1.0 0.0)
                    (list->vector (set-map vars (λ (x) 0.0)))
                    (- (fllog (flexpt (* 2.0 pi) (/ (->fl (set-count vars)) 2))))))
+(define (standard-gaussian-factor [vars : (Setof GaussianRandomVar)]) : Factor
+  (Factor vars
+          (hash (ann (set) (Setof TableCPDIndex)) (list (cons 1.0 (make-standard-gaussian vars))))
+          null))
 
 (define (make-gaussian [vars : (Setof GaussianRandomVar)]
                        [means : (Vectorof Float)]
@@ -171,6 +159,12 @@
                (fllog (* (flsqrt (matrix-determinant Σ))
                          (flexpt (* 2.0 pi) (/ (->fl (set-count vars)) 2.0))))))
   (CanonicalFactor vars K (matrix->vector h) g))
+(define (gaussian-factor [vars : (Setof GaussianRandomVar)]
+                         [means : (Vectorof Float)]
+                         [Σ : (Matrix Float)]) : Factor
+  (Factor vars
+          (hash (ann (set) (Setof TableCPDIndex)) (list (cons 1. (make-gaussian vars means Σ))))
+          null))
                   
 
 (define-type CanonicalMixture (Listof (Pairof Float CanonicalFactor)))
@@ -481,12 +475,33 @@
 (define (canonical-mixture-sum [mixes : (Listof CanonicalMixture)]) : CanonicalMixture
   (apply append mixes))
 
+; as from Friedman & Koller, Probabilistic Graphical Models Alg9.1
+(define (sum-product-eliminate-var [factors : (Setof Factor)]
+                                   [var : RandomVar]) : (Setof Factor)
+  (define factors-with-var (set-filter (λ ([factor : Factor]) (set-member? (Factor-scope factor) var))
+                                       factors))
+  (define factors-without-var (set-subtract factors factors-with-var))
+  (define new-factor (factor-marginalization (apply product-factor (set->list factors-with-var)) var))
+  (set-add factors-without-var new-factor))
+
+;; ibid
+;; we need to define a sensible order here.  set->list gives one that we use blithely.
+;
+(define (eliminate-variable [factors : (Setof Factor)]
+                            [vars : (Setof RandomVar)]) : Factor
+  (apply product-factor (set->list (foldl (λ ([var : RandomVar]
+                                              [fs : (Setof Factor)]) : (Setof Factor)
+                                            (sum-product-eliminate-var fs var))
+                                          factors
+                                          (set->list vars)))))
+
 (define (factor-marginalization [factor : Factor]
-                                [var : (U DiscreteRandomVar GaussianRandomVar)]) : Factor
+                                [var : RandomVar]) : Factor
   (unless (set-member? (Factor-scope factor) var)
     (error "Variable ~a is not in the scope of Factor ~a" var factor))
   (define reduced-scope (set-subtract (Factor-scope factor) (set var)))
   (define discrete-scope : (Setof DiscreteRandomVar) (set-filter DiscreteRandomVar? reduced-scope))
+
   (Factor reduced-scope
           (for/hash : FactorData ([label-list (make-TableCPD-labels (set->list discrete-scope))])
             (let ([label (list->set label-list)])
@@ -503,12 +518,20 @@
                                    ; datum is a CanonicalMixture and not a Float.
                                    )))]
                     [(DiscreteRandomVar? var)
-                     (let* ([var-indexes (get-cpd-labels var)]
+                     (let* ([var-indexes (list->set
+                                          (set-map
+                                           (get-cpd-labels var)
+                                           (λ ([s : (Setof TableCPDIndex)])
+                                             (set-filter
+                                              (λ ([i : (Pairof Symbol String)])
+                                                (not (member (car i)
+                                                             (set-map label (inst car Symbol String)))))
+                                              s))))]
                             [data : (Listof (U Float CanonicalMixture))
-                                  (map (λ ([index : (Setof TableCPDIndex)])
-                                         (hash-ref (Factor-data factor)
-                                                   (set-union label index)))
-                                       (set->list var-indexes))]
+                                    (map (λ ([index : (Setof TableCPDIndex)])
+                                           (hash-ref (Factor-data factor)
+                                                     (set-union label index)))
+                                         (set->list var-indexes))]
                             [non-floats (for/list : (Listof CanonicalMixture)
                                           ([i data]
                                            #:when (not (flonum? i)))
@@ -518,5 +541,41 @@
                                        ; if the first is a Float, the rest will be floats
                                        ; though the compiler does not know this
                                        (canonical-mixture-sum non-floats))])
-                       (values label datum))])))
+                       (values label datum))]
+                    [else (values (ann (set) (Setof TableCPDIndex)) 0.)]
+                    ; unreachable.
+                    )))
+          null))
+
+(define (generate-uniform-table-cpd [var : DiscreteRandomVar]) : Factor
+  (Factor (list->set (cons var (RandomVar-depends-on var)))
+          (for/hash : FactorData ([k (make-TableCPD-labels (filter DiscreteRandomVar?
+                                                                   (cons var (RandomVar-depends-on var))))])
+            (values (list->set k)
+                    (exact->inexact (/ 1 (length (DiscreteRandomVar-labels var))))))
+          null))
+
+(define (normalize-factor [f : Factor]) : Factor
+  (define norm-factor
+    (flsum (for/list : (Listof Float) ([v (hash-values (Factor-data f))])
+             (if (flonum? v)
+                 v
+                 (flsum (map (λ ([ x : (Pairof Float CanonicalFactor)]) (car x)) v))))))
+  (Factor (Factor-scope f)
+          (for/hash : FactorData ([(k v) (Factor-data f)])
+            (values k (if (flonum? v)
+                          (fl/ v norm-factor)
+                          (map (λ ([ x : (Pairof Float CanonicalFactor)])
+                                 (cons (fl/ (car x) norm-factor) (cdr x)))
+                               v))))
+          null))
+
+(define (make-factor-from-table [var : DiscreteRandomVar]
+                                [table : (HashTable (Listof TableCPDIndex) Float)]) : Factor
+  (define cpd
+    (for/hash : FactorData ([([k : (Listof TableCPDIndex)]
+                              [v : Float]) table])
+      (values (list->set k) v)))
+  (Factor (set-add (list->set (RandomVar-depends-on var)) var)
+          cpd
           null))
