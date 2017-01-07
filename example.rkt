@@ -36,9 +36,9 @@
 ; now, we don't really want uniform distributions.  So we will updated each
 ; cpd with values from the book.
 
-(update-cpd! model difficulty (make-factor-from-table difficulty #hash((((difficulty . "hard")) . 0.4) (((difficulty . "easy")) . 0.6))))
-(update-cpd! model intelligence (make-factor-from-table intelligence #hash((((iq . "high")) . 0.3) (((iq . "low")) . 0.7))))
-(update-cpd! model grade (make-factor-from-table grade
+(update-cpd! model difficulty (make-factor-from-table* difficulty #hash((((difficulty . "hard")) . 0.4) (((difficulty . "easy")) . 0.6))))
+(update-cpd! model intelligence (make-factor-from-table* intelligence #hash((((iq . "high")) . 0.3) (((iq . "low")) . 0.7))))
+(update-cpd! model grade (make-factor-from-table* grade
 #hash(
        (((difficulty . "easy") (iq . "low") (grade . "a")) . 0.3)
        (((grade . "b") (difficulty . "easy") (iq . "low")) . 0.4)
@@ -53,14 +53,14 @@
        (((iq . "high") (difficulty . "hard") (grade . "b")) . 0.3)
        (((iq . "high") (difficulty . "hard") (grade . "f")) . 0.2)
        )))
-(update-cpd! model SAT (make-factor-from-table SAT
+(update-cpd! model SAT (make-factor-from-table* SAT
 #hash(
        (((SAT . "low") (iq . "low")) . 0.95)
        (((SAT . "high") (iq . "low")) . 0.05)
        (((iq . "high") (SAT . "low")) . 0.2)
        (((iq . "high") (SAT . "high")) . 0.8)
        )))
-(update-cpd! model letter (make-factor-from-table letter
+(update-cpd! model letter (make-factor-from-table* letter
     #hash(
        (((letter . "poor") (grade . "a")) . 0.1)
        (((letter . "good") (grade . "a")) . 0.9)

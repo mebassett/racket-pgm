@@ -11,7 +11,7 @@
          TableCPDIndex?
          AnyIndex
          AnyIndex?
-        
+         make-factor-from-table*
          generate-uniform-table-cpd
          is-valid-cpd?
          (struct-out DiscreteFactor)
@@ -29,6 +29,7 @@
          make-factor-from-table
          FactorData
          CanonicalMixture
+         make-TableCPD-labels
          (struct-out Factor))
 
 
@@ -533,10 +534,10 @@
                                                              (set-map label (inst car Symbol String)))))
                                               s))))]
                             [data : (Listof (U Float CanonicalMixture))
-                                    (map (λ ([index : (Setof TableCPDIndex)])
-                                           (hash-ref (Factor-data factor)
-                                                     (set-union label index)))
-                                         (set->list var-indexes))]
+                                  (map (λ ([index : (Setof TableCPDIndex)])
+                                         (hash-ref (Factor-data factor)
+                                                   (set-union label index)))
+                                       (set->list var-indexes))]
                             [non-floats (for/list : (Listof CanonicalMixture)
                                           ([i data]
                                            #:when (not (flonum? i)))
@@ -574,9 +575,27 @@
                                  (cons (fl/ (car x) norm-factor) (cdr x)))
                                v))))
           null))
+(: make-factor-from-table (case-> (-> DiscreteRandomVar
+                                      (HashTable (Listof TableCPDIndex) Float)
+                                      Factor)
+                                  (-> DiscreteRandomVar
+                                      (HashTable (Setof TableCPDIndex) Float)
+                                      Factor)))
 
-(define (make-factor-from-table [var : DiscreteRandomVar]
-                                [table : (HashTable (Listof TableCPDIndex) Float)]) : Factor
+(define (make-factor-from-table var table)
+  (define cpd
+    (for/hash : FactorData ([([k : (U (Setof TableCPDIndex) (Listof TableCPDIndex))]
+                              [v : Float]) table])
+      (values (if (list? k) (list->set k) k) v)))
+  (Factor (set-add (list->set (RandomVar-depends-on var)) var)
+          cpd
+          null))
+
+(: make-factor-from-table* (-> DiscreteRandomVar
+                               (HashTable (Listof TableCPDIndex) Float)
+                               Factor))
+
+(define (make-factor-from-table* var table)
   (define cpd
     (for/hash : FactorData ([([k : (Listof TableCPDIndex)]
                               [v : Float]) table])
@@ -584,3 +603,4 @@
   (Factor (set-add (list->set (RandomVar-depends-on var)) var)
           cpd
           null))
+
