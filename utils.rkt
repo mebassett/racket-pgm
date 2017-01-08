@@ -1,7 +1,7 @@
 #lang typed/racket
 
 (require math/matrix math/flonum)
-(provide set-filter unpack order-of-elems)
+(provide set-filter unpack order-of-elems flmean)
 
 (: set-filter (All (T R)
                    (case->

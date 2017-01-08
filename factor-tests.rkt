@@ -168,14 +168,24 @@
   (define f2 (CanonicalFactor (set y z) (matrix [[0. 0.] [1. 0.]]) (vector 0. 0.) 0.))
   (define f3 (CanonicalFactor (set x z) (matrix [[-1. -1.] [-1. -1.]]) (vector 0. 0.) 0.))
   (define f4 (make-standard-gaussian (set x)))
-  (define f5 (make-standard-gaussian (set y))) 
+  (define f5 (make-standard-gaussian (set y)))
+  (define f6 (make-standard-gaussian (set x y z)))
+  
+  (define f7 (CanonicalFactor (set x z) (matrix [[-1. -1.] [-1. -1.]]) (vector 3. 3.) 0.))
+  (define f8 (CanonicalFactor (set x y) (matrix [[-1. -1.] [-1. -1.]]) (vector 2. 2.) 0.))
   (test-suite "Products on Canonical Factors"
               ;(test-check "Matrix join 1" matrix= (sum-joint-K f1 f3) (matrix [[0. 2. -1.] [0. 3. 0.] [-1. 0. -1.]]))
               ;(test-check "Matrix join 2" matrix= (sum-joint-K f1 f2) (matrix [[1. 2. 0.] [0. 3. 0.] [0. 1. 0.]]))
               (test-= "Products on Canonical Factors"
                       ((product-factor f4 f5) (set '(x . 0.0) '(y . 0.)))
                       (fl* (f4 (set '(x . .0))) (f5 (set '(y . 0.))))
-                      +TOLERANCE+)))
+                      +TOLERANCE+)
+              (test-equal? "K-Matrix subtraction on Canonical Factors"
+                           (K- f6 f5)
+                           (matrix [[1. 0. 0.] [0. 0. 0.] [0. 0. 1.]]))
+              (test-equal? "h-vector subtraction on Canonical Factors"
+                           (h- f7 f8)
+                           (vector 1. -2. 3.))))
 
 (define Factor-Product
   (test-suite "Products on Factors"
@@ -218,7 +228,7 @@
   (define grade (make-DiscreteRandomVar 'grade '("a" "b" "f")))
   (define letter (make-DiscreteRandomVar 'letter '("good" "poor")))
   (add-dependency! letter grade)
-  (define letter-factor (make-factor-from-table letter
+  (define letter-factor (make-factor-from-table* letter
                                                  #hash(
                                                        (((letter . "poor") (grade . "a")) . 0.1)
                                                        (((letter . "good") (grade . "a")) . 0.9)

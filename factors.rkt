@@ -6,6 +6,7 @@
          threading)
 
 (provide ContinuousIndex
+         canonical-order
          ContinuousIndex?
          TableCPDIndex
          TableCPDIndex?
@@ -30,6 +31,8 @@
          FactorData
          CanonicalMixture
          make-TableCPD-labels
+         K-
+         h-
          (struct-out Factor))
 
 
@@ -348,6 +351,32 @@
     (error "RandomVar ~a is not in scope ~a of Factor ~a" v (CanonicalFactor-scope f) f))
   (car (order-of-elems (list v) (canonical-order (CanonicalFactor-scope f)))))
 
+(: K- (-> CanonicalFactor CanonicalFactor (Matrix Float)))
+(define (K- f1 f2)
+  (define factors (list f1 f2))
+  (define joint-scope (get-joint-scope factors))
+  (define index-var-lookup : (HashTable Integer GaussianRandomVar)
+    (apply joint-var-order factors))
+  (build-matrix (set-count joint-scope)
+                (set-count joint-scope)
+                (λ ([r : Integer] [c : Integer]) : Float
+                  (define r-var (hash-ref index-var-lookup r))
+                  (define c-var (hash-ref index-var-lookup c))
+                  (define (factor-on? [f : CanonicalFactor]) : Boolean
+                    (and (set-member? (CanonicalFactor-scope f) r-var)
+                         (set-member? (CanonicalFactor-scope f) c-var)))
+                  (define (get-elem [f : CanonicalFactor]) : Float
+                    (matrix-ref (CanonicalFactor-K f)
+                                (get-var-index r-var f)
+                                (get-var-index c-var f)))
+                  (cond [(and (factor-on? f1) (factor-on? f2))
+                         (fl- (get-elem f1) (get-elem f2))]
+                        [(and (factor-on? f1) (not (factor-on? f2)))
+                         (get-elem f1)]
+                        [(and (factor-on? f2) (not (factor-on? f1)))
+                         (- (get-elem f2))]
+                        [else 0.]))))
+
 (: sum-joint-K (-> CanonicalFactor * (Matrix Float)))
 (define (sum-joint-K . factors)
   (define joint-scope (get-joint-scope factors))
@@ -368,11 +397,27 @@
                                                              (get-var-index r-var f)
                                                              (get-var-index c-var f))))))))
 
+(: h- (-> CanonicalFactor CanonicalFactor (Vectorof Float)))
+(define (h- f1 f2)
+  (define factors (list f1 f2))
+  (define joint-scope (get-joint-scope factors))
+  (for/vector : (Vectorof Float)
+    ([var joint-scope])
+    (define (factor-on? [f : CanonicalFactor]) : Boolean
+      (set-member? (CanonicalFactor-scope f) var))
+    (define (get-elem [f : CanonicalFactor]) : Float
+      (vector-ref (CanonicalFactor-h f) (get-var-index var f)))
+    (cond [(and (factor-on? f1) (factor-on? f2))
+           (fl- (get-elem f1) (get-elem f2))]
+          [(and (factor-on? f1) (not (factor-on? f2)))
+           (get-elem f1)]
+          [(and (factor-on? f2) (not (factor-on? f1)))
+           (- (get-elem f2))]
+          [else 0.0])))
+
 (: sum-joint-h (-> CanonicalFactor * (Vectorof Float)))
 (define (sum-joint-h . factors)
   (define joint-scope (get-joint-scope factors))
-  (define index-var-lookup : (HashTable Integer GaussianRandomVar)
-    (apply joint-var-order factors))
   (for/vector : (Vectorof Float)
     ([var joint-scope])
     (define elem-factors
