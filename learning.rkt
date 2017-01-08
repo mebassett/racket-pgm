@@ -214,9 +214,6 @@
          
              (define μ (car v))
              (define Σ (cdr v))
-             (displayln (RandomVar-name var))
-             (displayln (map RandomVar-name (RandomVar-depends-on var)))
-             (displayln deps-scope)
              (if (set-empty? deps-scope)
                  (values k (list (cons 1. (make-gaussian continuous-scope μ Σ))))
                  (let* ([Sigma_x (submatrix Σ deps-index deps-index)]
