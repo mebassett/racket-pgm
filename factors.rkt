@@ -35,7 +35,7 @@
          h-
          (struct-out Factor))
 
-
+(define dummy-continuous-var (make-GaussianRandomVar 'dummy-continuous-var))
 (define-type ContinuousIndex (Pairof Symbol Float))
 (define-predicate ContinuousIndex? ContinuousIndex)
 
@@ -129,12 +129,15 @@
      (define var-labels
        (list->set
         (set-map values (λ ([x : ContinuousIndex]) (car x)))))
-     (unless (equal? scope-labels var-labels)
+     (unless (or (equal? scope-labels var-labels)
+                 (and (set-empty? var-labels) (equal? scope-labels (set 'dummy-continuous-var))))
        (error "Canonical Factor ~a called with variables ~a which are outside of my scope: ~a"
               self values (CanonicalFactor-scope self)))
      (define X : (Matrix Float)
-       (->col-matrix (map (λ ([x : ContinuousIndex]) (cdr x))
-                          (canonical-order values))))
+       (if (equal? scope-labels (set 'dummy-continuous-var))
+           (->col-matrix (vector 1.))
+           (->col-matrix (map (λ ([x : ContinuousIndex]) (cdr x))
+                              (canonical-order values)))))
      (flexp (+ (CanonicalFactor-g self)
                (unpack (matrix* (->row-matrix (CanonicalFactor-h self)) X))
                (* -0.5
@@ -211,6 +214,7 @@
          Float)])
 
 
+
 (: partial-application-factor (case-> (-> CanonicalFactor
                                           (Setof ContinuousIndex)
                                           CanonicalFactor)
@@ -221,6 +225,7 @@
          (define reduced-scope
            (set-filter (λ ([v : GaussianRandomVar]) (false? (member (RandomVar-name v) evidence-labels)))
                        (CanonicalFactor-scope factor)))
+ 
          (define reduced-evidence-labels (filter (λ ([label : Symbol])
                                                    (member label (set-map (CanonicalFactor-scope factor) RandomVar-name)))
                                                  evidence-labels))
@@ -231,53 +236,70 @@
                                                       (set-member? var-labels label))
                                                     evidence-labels))])
              (order-of-elems (canonical-order reduced-evidence-labels)
-                             (canonical-order var-labels))))
+                             (canonical-order var-labels))))  
+         (cond [(set-empty? reduced-scope)
+                (define only-value (~> evidence
+                                       canonical-order
+                                       (map (λ ([x : ContinuousIndex]) (cdr x)) _)
+                                       car))
+                (CanonicalFactor (set dummy-continuous-var)
+                                 (CanonicalFactor-K factor)
+                                 (vector (fl- (vector-ref (CanonicalFactor-h factor) 0)
+                                              (fl* (unpack (CanonicalFactor-K factor))
+                                                   only-value)))
+                                 (fl+ (CanonicalFactor-g factor)
+                                      (fl+ (fl* (vector-ref (CanonicalFactor-h factor) 0)
+                                                only-value)
+                                           (fl* -0.5 (fl* only-value
+                                                          (fl* only-value
+                                                               (unpack (CanonicalFactor-K factor))))))))]
+               [else
                                              
-         (define scope-index (order-of-elems (canonical-order reduced-scope)
-                                             (canonical-order (CanonicalFactor-scope factor))))
-         (define evidence-names (~> evidence
-                                    set->list
-                                    (map (λ ([ x : ContinuousIndex ]) (car x)) _)
-                                    list->set
-                                    canonical-order))
-         (define evidence-index         
-           (order-of-elems (~> (set-subtract (CanonicalFactor-scope factor)
-                                             reduced-scope)
-                               (set-map _ (λ ([v : RandomVar]) (RandomVar-name v)))
-                               list->set
-                               canonical-order)
-                           evidence-names))
+                (define scope-index (order-of-elems (canonical-order reduced-scope)
+                                                    (canonical-order (CanonicalFactor-scope factor))))
+                (define evidence-names (~> evidence
+                                           set->list
+                                           (map (λ ([ x : ContinuousIndex ]) (car x)) _)
+                                           list->set
+                                           canonical-order))
+                (define evidence-index         
+                  (order-of-elems (~> (set-subtract (CanonicalFactor-scope factor)
+                                                    reduced-scope)
+                                      (set-map _ (λ ([v : RandomVar]) (RandomVar-name v)))
+                                      list->set
+                                      canonical-order)
+                                  evidence-names))
                                                 
-         (define K_scope (submatrix (CanonicalFactor-K factor)
-                                    scope-index
-                                    scope-index))
-         (define K_evidence (submatrix (CanonicalFactor-K factor)
-                                       reduced-evidence-index
-                                       reduced-evidence-index))
-         (define K_scope/evidence (submatrix (CanonicalFactor-K factor)
-                                             scope-index
-                                             reduced-evidence-index))
-         (define h (->col-matrix (CanonicalFactor-h factor)))
-         (define h_scope (~> h
-                             (submatrix _ scope-index (list 0))
-                             ->col-matrix))
+                (define K_scope (submatrix (CanonicalFactor-K factor)
+                                           scope-index
+                                           scope-index))
+                (define K_evidence (submatrix (CanonicalFactor-K factor)
+                                              reduced-evidence-index
+                                              reduced-evidence-index))
+                (define K_scope/evidence (submatrix (CanonicalFactor-K factor)
+                                                    scope-index
+                                                    reduced-evidence-index))
+                (define h (->col-matrix (CanonicalFactor-h factor)))
+                (define h_scope (~> h
+                                    (submatrix _ scope-index (list 0))
+                                    ->col-matrix))
            
-         (define h_evidence (~> h
-                                (submatrix _ reduced-evidence-index (list 0))
-                                ->col-matrix))
-         (define evidence-vector (~> evidence
-                                     canonical-order
-                                     (map (λ ([x : ContinuousIndex]) (cdr x)) _)
-                                     ->col-matrix
-                                     (submatrix _ evidence-index (list 0))
-                                     ->col-matrix))
-         (CanonicalFactor reduced-scope
-                          K_scope
-                          (matrix->vector (matrix- h_scope
-                                                   (matrix* K_scope/evidence evidence-vector)))
-                          (+ (CanonicalFactor-g factor)
-                             (unpack (matrix* (matrix-transpose h_evidence) evidence-vector))
-                             (fl* -0.5 (unpack (matrix* (matrix-transpose evidence-vector) K_evidence evidence-vector)))))]                                    
+                (define h_evidence (~> h
+                                       (submatrix _ reduced-evidence-index (list 0))
+                                       ->col-matrix))
+                (define evidence-vector (~> evidence
+                                            canonical-order
+                                            (map (λ ([x : ContinuousIndex]) (cdr x)) _)
+                                            ->col-matrix
+                                            (submatrix _ evidence-index (list 0))
+                                            ->col-matrix))
+                (CanonicalFactor reduced-scope
+                                 K_scope
+                                 (matrix->vector (matrix- h_scope
+                                                          (matrix* K_scope/evidence evidence-vector)))
+                                 (+ (CanonicalFactor-g factor)
+                                    (unpack (matrix* (matrix-transpose h_evidence) evidence-vector))
+                                    (fl* -0.5 (unpack (matrix* (matrix-transpose evidence-vector) K_evidence evidence-vector)))))])]                                   
                                     
         [(Factor? factor)
          (define reduced-scope

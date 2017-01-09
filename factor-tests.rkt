@@ -8,7 +8,7 @@
          math/distributions)
 
 
-(define +TOLERANCE+ 0.00000001)
+(define +TOLERANCE+ 0.0005)
 
 (define x (make-GaussianRandomVar 'x))
 (define y (make-GaussianRandomVar 'y))
@@ -148,8 +148,21 @@
                               (set '(difficulty . "easy")
                                    '(iq . 130.0))))
 
-(define Factor-Evidence-Reduction
+(define (Factor-Evidence-Reduction)
+  (define crime (make-GaussianRandomVar 'crime))
+  (define crime-factor (Factor (set crime)
+                               (hash (ann (set) (Setof TableCPDIndex))
+                                     (list
+                                      (cons 1.
+                                            (make-gaussian (set crime)
+                                                           (vector 3.59)
+                                                           (matrix [[73.76]])))))
+                               null))
   (test-suite "Evidence Reduction on general factors"
+              (test-= "Reducing a continuos variable to itself"
+                      (crime-factor (set '(crime . 3.59)))
+                      ((partial-application-factor crime-factor (set '(crime . 3.59))) (ann (set) (Setof AnyIndex)))
+                      +TOLERANCE+)
               (test-= "Reducing on discrete variable."
                       (cgrade-when-hard (set '(grade . 65.0) '(health . 0.85) '(iq . 115.0)))
                       (multivariate-standard-gaussian (set '(x . .0) '(y . .0) '(z . .0)))
@@ -180,9 +193,9 @@
                       ((product-factor f4 f5) (set '(x . 0.0) '(y . 0.)))
                       (fl* (f4 (set '(x . .0))) (f5 (set '(y . 0.))))
                       +TOLERANCE+)
-              (test-equal? "K-Matrix subtraction on Canonical Factors"
-                           (K- f6 f5)
-                           (matrix [[1. 0. 0.] [0. 0. 0.] [0. 0. 1.]]))
+              (test-true "K-Matrix subtraction on Canonical Factors"
+                         (matrix= (K- f6 f5)
+                                  (matrix [[1. 0. 0.] [0. 0. 0.] [0. 0. 1.]])))
               (test-equal? "h-vector subtraction on Canonical Factors"
                            (h- f7 f8)
                            (vector 1. -2. 3.))))
@@ -258,7 +271,7 @@
 
   (run-tests Canonical-Factor-Evidence-Reduction)
   (run-tests Discrete-Factor-Evidence-Reduction)
-  (run-tests Factor-Evidence-Reduction)
+  (run-tests (Factor-Evidence-Reduction))
   (run-tests (Canonical-Factor-Product))
   (run-tests Factor-Product)
   (run-tests (Factor-Marginalization))
