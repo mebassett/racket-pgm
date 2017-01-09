@@ -364,7 +364,7 @@
   (define joint-scope (get-joint-scope factors))
   (for/hash : (HashTable Integer GaussianRandomVar)
     ([i (in-range (set-count joint-scope))]
-     [var joint-scope])
+     [var (canonical-order joint-scope)])
     (values i var)))
 
 (define (get-var-index [v : GaussianRandomVar]
@@ -424,7 +424,7 @@
   (define factors (list f1 f2))
   (define joint-scope (get-joint-scope factors))
   (for/vector : (Vectorof Float)
-    ([var joint-scope])
+    ([var (canonical-order joint-scope)])
     (define (factor-on? [f : CanonicalFactor]) : Boolean
       (set-member? (CanonicalFactor-scope f) var))
     (define (get-elem [f : CanonicalFactor]) : Float
