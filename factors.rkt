@@ -36,6 +36,9 @@
          (struct-out Factor))
 
 (define dummy-continuous-var (make-GaussianRandomVar 'dummy-continuous-var))
+(define (not-dummy-var? [var : RandomVar]) : Boolean
+  (not (equal? (RandomVar-name var) 'dummy-continuous-var)))
+
 (define-type ContinuousIndex (Pairof Symbol Float))
 (define-predicate ContinuousIndex? ContinuousIndex)
 
@@ -135,7 +138,7 @@
               self values (CanonicalFactor-scope self)))
      (define X : (Matrix Float)
        (if (equal? scope-labels (set 'dummy-continuous-var))
-           (->col-matrix (vector 1.))
+           (->col-matrix (vector 0.))
            (->col-matrix (map (λ ([x : ContinuousIndex]) (cdr x))
                               (canonical-order values)))))
      (flexp (+ (CanonicalFactor-g self)
@@ -238,21 +241,11 @@
              (order-of-elems (canonical-order reduced-evidence-labels)
                              (canonical-order var-labels))))  
          (cond [(set-empty? reduced-scope)
-                (define only-value (~> evidence
-                                       canonical-order
-                                       (map (λ ([x : ContinuousIndex]) (cdr x)) _)
-                                       car))
+
                 (CanonicalFactor (set dummy-continuous-var)
-                                 (CanonicalFactor-K factor)
-                                 (vector (fl- (vector-ref (CanonicalFactor-h factor) 0)
-                                              (fl* (unpack (CanonicalFactor-K factor))
-                                                   only-value)))
-                                 (fl+ (CanonicalFactor-g factor)
-                                      (fl+ (fl* (vector-ref (CanonicalFactor-h factor) 0)
-                                                only-value)
-                                           (fl* -0.5 (fl* only-value
-                                                          (fl* only-value
-                                                               (unpack (CanonicalFactor-K factor))))))))]
+                                 (matrix [[0.]])
+                                 (vector 0.)
+                                 (fllog (factor evidence)))]
                [else
                                              
                 (define scope-index (order-of-elems (canonical-order reduced-scope)
@@ -350,9 +343,10 @@
                            (-> (Listof Factor)  (Setof RandomVar))))
 (define (get-joint-scope factors)
   (cond [(CanonicalFactor? (car factors))
-         (apply (curry (inst set-union GaussianRandomVar) 
-                       (ann (set) (Setof GaussianRandomVar)))
-                (map CanonicalFactor-scope factors))]
+         (set-filter not-dummy-var?
+                     (apply (curry (inst set-union GaussianRandomVar)
+                                   (ann (set) (Setof GaussianRandomVar)))
+                            (map CanonicalFactor-scope factors)))]
         [(Factor? (car factors))
          (apply (curry (inst set-union RandomVar) 
                        (ann (set) (Setof RandomVar)))
@@ -404,20 +398,22 @@
   (define joint-scope (get-joint-scope factors))
   (define index-var-lookup : (HashTable Integer GaussianRandomVar)
     (apply joint-var-order factors))
-  (build-matrix (set-count joint-scope)
-                (set-count joint-scope)
-                (λ ([r : Integer] [c : Integer]) : Float
-                  (define r-var (hash-ref index-var-lookup r))
-                  (define c-var (hash-ref index-var-lookup c))
-                  (define elem-factors
-                    (set-filter (λ ([f : CanonicalFactor])
-                                  (and (set-member? (CanonicalFactor-scope f) r-var)
-                                       (set-member? (CanonicalFactor-scope f) c-var)))
-                                (list->set factors)))
-                  (flsum (set-map elem-factors (λ ([f : CanonicalFactor])
-                                                 (matrix-ref (CanonicalFactor-K f)
-                                                             (get-var-index r-var f)
-                                                             (get-var-index c-var f))))))))
+  (if (set-empty? joint-scope)
+      (matrix [[0.]])
+      (build-matrix (set-count joint-scope)
+                    (set-count joint-scope)
+                    (λ ([r : Integer] [c : Integer]) : Float
+                      (define r-var (hash-ref index-var-lookup r))
+                      (define c-var (hash-ref index-var-lookup c))
+                      (define elem-factors
+                        (set-filter (λ ([f : CanonicalFactor])
+                                      (and (set-member? (CanonicalFactor-scope f) r-var)
+                                           (set-member? (CanonicalFactor-scope f) c-var)))
+                                    (list->set factors)))
+                      (flsum (set-map elem-factors (λ ([f : CanonicalFactor])
+                                                     (matrix-ref (CanonicalFactor-K f)
+                                                                 (get-var-index r-var f)
+                                                                 (get-var-index c-var f)))))))))
 
 (: h- (-> CanonicalFactor CanonicalFactor (Vectorof Float)))
 (define (h- f1 f2)
@@ -440,15 +436,17 @@
 (: sum-joint-h (-> CanonicalFactor * (Vectorof Float)))
 (define (sum-joint-h . factors)
   (define joint-scope (get-joint-scope factors))
-  (for/vector : (Vectorof Float)
-    ([var joint-scope])
-    (define elem-factors
-      (set-filter (λ ([f : CanonicalFactor])
-                    (set-member? (CanonicalFactor-scope f) var))
-                  (list->set factors)))
-    (flsum (set-map elem-factors (λ ([f : CanonicalFactor])
-                                   (vector-ref (CanonicalFactor-h f)
-                                               (get-var-index var f)))))))
+  (if (set-empty? joint-scope)
+      (vector 0.)
+      (for/vector : (Vectorof Float)
+        ([var joint-scope])
+        (define elem-factors
+          (set-filter (λ ([f : CanonicalFactor])
+                        (set-member? (CanonicalFactor-scope f) var))
+                      (list->set factors)))
+        (flsum (set-map elem-factors (λ ([f : CanonicalFactor])
+                                       (vector-ref (CanonicalFactor-h f)
+                                                   (get-var-index var f))))))))
 
 (define (mixed-product [ fl : Float ]
                        [ mix : CanonicalMixture ]) : CanonicalMixture
@@ -473,7 +471,11 @@
          (CanonicalFactor joint-scope
                           (apply sum-joint-K factors)
                           (apply sum-joint-h factors)
-                          (flsum (map CanonicalFactor-g factors)))]
+                          (flsum (map CanonicalFactor-g
+                                      (filter (λ ([f : CanonicalFactor])
+                                                (not (equal? (CanonicalFactor-scope f)
+                                                             (set dummy-continuous-var))))
+                                              factors))))]
         [(Factor? (car factors))
          (define (single-product [f1 : Factor]
                                  [f2 : Factor]) : Factor
