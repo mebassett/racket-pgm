@@ -449,11 +449,14 @@
                                                    (get-var-index var f))))))))
 
 (define (mixed-product [ fl : Float ]
-                       [ mix : CanonicalMixture ]) : CanonicalMixture
-  (map (λ ([ cm : (Pairof Float CanonicalFactor)])
-         (cons (fl* fl (car cm))
-               (cdr cm)))
-       mix))
+                       [ mix : CanonicalMixture ]) : (U Float CanonicalMixture)
+  (if (and (= (length mix) 1)
+           (set-empty? (set-filter not-dummy-var? (CanonicalFactor-scope (cdar mix)))))
+      fl
+      (map (λ ([ cm : (Pairof Float CanonicalFactor)])
+             (cons (fl* fl (car cm))
+                   (cdr cm)))
+           mix)))
 
 (define (canonical-mixture-product [cm1 : CanonicalMixture]
                                    [cm2 : CanonicalMixture]) : CanonicalMixture
