@@ -39,6 +39,8 @@
 (define training-set (take boston-house-data 400))
 (define testing-set (drop boston-house-data 400))
 
+
+; parameter learning/training for our model
 (mle-train-model! model training-set)
 
 ; this model deals only in probability distributions.

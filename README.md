@@ -42,3 +42,9 @@ he is afraid of them especially in the case of missing or incomplete data.
 
 If the reader scoffs at the lack of intellectual intrepidness of the author, then the
 reader is of course invited to contribute. :)
+
+Example datasets: 
+
+
+    Lichman, M. (2013). UCI Machine Learning Repository [http://archive.ics.uci.edu/ml]. Irvine, CA: University of California, School of Information and Computer Science.
+
