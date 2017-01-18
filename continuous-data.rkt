@@ -1,6 +1,6 @@
 #lang typed/racket
 (provide continuous-data)
-(define continuous-data : (Listof (Vectorof (U Float String))) (list
+(define continuous-data : (Listof (Vectorof (U Null Float String))) (list
 (vector "x"	"z"	"y")
 (vector 23.3394435457	"cat2"	66.2293043092)
 (vector 23.9713656785	"cat1"	91.3614230127)

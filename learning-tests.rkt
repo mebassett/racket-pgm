@@ -30,7 +30,7 @@
   (test-suite "Training a purely discrete model with no missing data."
               (test-equal? "Creating a sufficient Statistic"
                            (create-discrete-sufficient-statistic difficulty student-data)
-                           (hash (set '(difficulty . "hard")) '(114 . 286) (set '(difficulty . "easy")) '(172 . 286)))
+                           (hash (set '(difficulty . "hard")) '(114. . 286.) (set '(difficulty . "easy")) '(172. . 286.)))
               (test-= "Checking learned params"
                       ((hash-ref (Model-cpds model) grade) (set '(grade . "a") '(difficulty . "easy") '(intelligence . "high")))
                       (exact->inexact (/ 47 52))

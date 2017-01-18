@@ -2,7 +2,7 @@
 (provide student-data)
 (define student-data : (Listof (Vectorof (U Float String Null)))
 (list
-(vector "difficulty" "intelligence" "grade" "letter" "SAT")
+(vector "intelligence" "difficulty" "grade" "letter" "SAT")
 (vector "avg" "hard" null "bad" "noncollege")
 (vector "avg" "hard" null "bad" "noncollege")
 (vector "avg" "hard" null "bad" "noncollege")

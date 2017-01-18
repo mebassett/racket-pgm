@@ -1,6 +1,6 @@
 #lang typed/racket
 (provide student-data)
-(define student-data : (Listof (Vectorof (U Float String)))
+(define student-data : (Listof (Vectorof (U Null Float String)))
 (list (vector "intelligence" "difficulty" "grade" "letter" "SAT")
 (vector "avg" "hard" "c" "bad" "noncollege")
 (vector "avg" "hard" "c" "bad" "noncollege")
