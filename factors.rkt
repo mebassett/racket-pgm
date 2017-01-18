@@ -14,6 +14,7 @@
          AnyIndex?
          make-factor-from-table*
          generate-uniform-table-cpd
+         generate-random-table-cpd
          is-valid-cpd?
          (struct-out DiscreteFactor)
          (struct-out CanonicalFactor)
@@ -26,6 +27,7 @@
          canonical-factor-marginalization
          factor-marginalization
          normalize-factor
+         normalize-factor*
          eliminate-variable
          make-factor-from-table
          FactorData
@@ -632,6 +634,41 @@
             (values (list->set k)
                     (exact->inexact (/ 1 (length (DiscreteRandomVar-labels var))))))
           null))
+(define (generate-random-table-cpd [var : DiscreteRandomVar]) : Factor
+  (define scope
+    (filter DiscreteRandomVar?
+            (cons var (RandomVar-depends-on var))))
+  (normalize-factor*   (Factor (list->set scope)
+                               (for/hash : FactorData ([k (make-TableCPD-labels scope)])
+                                 (values (list->set k)
+                                         (random)))
+                               null)
+                       var))
+
+(define (normalize-factor* [f : Factor]
+                           [v : DiscreteRandomVar]) : Factor
+  (define discrete-vars (set-filter DiscreteRandomVar? (Factor-scope f)))
+  (define norm-factor
+    (for/hash : (HashTable (Setof TableCPDIndex) Float)
+      ([label (make-TableCPD-labels (set->list (set-subtract discrete-vars (set v))))])
+         
+      (define internal-norm-factor
+        (flsum (map (λ ([val : String])
+                      (f (list->set (cons (cons (RandomVar-name v) val) label))))
+                    (DiscreteRandomVar-labels v))))
+      (values (list->set label) internal-norm-factor)))
+  (Factor (Factor-scope f)
+          (for/hash : FactorData ([(indexes value) (Factor-data f)])
+            (values indexes
+                    (if (flonum? value)
+                        (fl/ value
+                             (hash-ref norm-factor
+                                       (set-filter (λ ([index : TableCPDIndex])
+                                                     (not (equal? (car index)
+                                                                  (RandomVar-name v))))
+                                                   indexes)))
+                        value)))
+          null))
 
 (define (normalize-factor [f : Factor]) : Factor
   (define norm-factor
@@ -647,6 +684,9 @@
                                  (cons (fl/ (car x) norm-factor) (cdr x)))
                                v))))
           null))
+
+
+
 (: make-factor-from-table (case-> (-> DiscreteRandomVar
                                       (HashTable (Listof TableCPDIndex) Float)
                                       Factor)
